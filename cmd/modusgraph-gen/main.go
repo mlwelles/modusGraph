@@ -4,7 +4,7 @@
 //
 // Usage:
 //
-//	go run github.com/matthewmcneely/modusgraph/cmd/modusgraphgen [flags]
+//	go run github.com/matthewmcneely/modusgraph/cmd/modusgraph-gen [flags]
 //
 // When invoked via go:generate (the typical case), it uses the current working
 // directory as the target package.
@@ -16,8 +16,8 @@ import (
 	"log"
 	"os"
 
-	"github.com/matthewmcneely/modusgraph/cmd/modusgraphgen/internal/generator"
-	"github.com/matthewmcneely/modusgraph/cmd/modusgraphgen/internal/parser"
+	"github.com/matthewmcneely/modusgraph/cmd/modusgraph-gen/internal/generator"
+	"github.com/matthewmcneely/modusgraph/cmd/modusgraph-gen/internal/parser"
 )
 
 func main() {

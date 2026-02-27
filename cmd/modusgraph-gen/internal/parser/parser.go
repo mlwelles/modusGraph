@@ -13,7 +13,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/matthewmcneely/modusgraph/cmd/modusgraphgen/internal/model"
+	"github.com/matthewmcneely/modusgraph/cmd/modusgraph-gen/internal/model"
 )
 
 // Parse loads all Go source files in the directory at pkgDir, extracts exported

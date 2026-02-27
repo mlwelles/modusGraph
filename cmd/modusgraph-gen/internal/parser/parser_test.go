@@ -6,7 +6,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/matthewmcneely/modusgraph/cmd/modusgraphgen/internal/model"
+	"github.com/matthewmcneely/modusgraph/cmd/modusgraph-gen/internal/model"
 )
 
 func moviesDir(t *testing.T) string {

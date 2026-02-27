@@ -15,7 +15,7 @@ import (
 	"text/template"
 	"unicode"
 
-	"github.com/matthewmcneely/modusgraph/cmd/modusgraphgen/internal/model"
+	"github.com/matthewmcneely/modusgraph/cmd/modusgraph-gen/internal/model"
 )
 
 //go:embed templates/*.tmpl
