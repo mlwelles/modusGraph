@@ -71,3 +71,15 @@ func TestMultiQueryExecuteReturnsPerBlockResults(t *testing.T) {
 		t.Fatalf("results[filtered][0].Name = %q, want gear", results["filtered"][0].Name)
 	}
 }
+
+func TestMultiQueryExecuteEmptyReturnsEmptyMap(t *testing.T) {
+	conn := newConn(t)
+	mq := typed.NewMultiQuery[widget](conn)
+	results, err := mq.Execute(context.Background())
+	if err != nil {
+		t.Fatalf("Execute on empty MultiQuery: %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("expected empty map, got %v", results)
+	}
+}
