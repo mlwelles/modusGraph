@@ -37,3 +37,37 @@ func TestMultiQueryAddRejectsDuplicateName(t *testing.T) {
 	}()
 	mq.Add("byName", q)
 }
+
+func TestMultiQueryExecuteReturnsPerBlockResults(t *testing.T) {
+	ctx := context.Background()
+	conn := newConn(t)
+	c := typed.NewClient[widget](conn)
+
+	for _, w := range []*widget{
+		{Name: "sprocket", Qty: 1},
+		{Name: "gear", Qty: 5},
+		{Name: "bolt", Qty: 10},
+	} {
+		if err := c.Add(ctx, w); err != nil {
+			t.Fatalf("Add %s: %v", w.Name, err)
+		}
+	}
+
+	mq := typed.NewMultiQuery[widget](conn)
+	mq.Add("all", c.Query(ctx))
+	mq.Add("filtered", c.Query(ctx).Filter("eq(name, $1)", "gear"))
+
+	results, err := mq.Execute(ctx)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if got := len(results["all"]); got != 3 {
+		t.Fatalf("results[all] has %d rows, want 3", got)
+	}
+	if got := len(results["filtered"]); got != 1 {
+		t.Fatalf("results[filtered] has %d rows, want 1", got)
+	}
+	if results["filtered"][0].Name != "gear" {
+		t.Fatalf("results[filtered][0].Name = %q, want gear", results["filtered"][0].Name)
+	}
+}

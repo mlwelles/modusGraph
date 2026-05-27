@@ -7,8 +7,10 @@ package typed
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
+	dg "github.com/dolan-in/dgman/v2"
 	"github.com/matthewmcneely/modusgraph"
 )
 
@@ -51,12 +53,57 @@ func (mq *MultiQuery[T]) BlockNames() []string {
 	return out
 }
 
-// Execute runs all blocks in a single Dgraph round-trip and returns the
-// per-block results. The full implementation lands in the next commit on
-// this branch.
+// Execute runs every registered block in a single Dgraph round-trip and
+// returns the per-block results, keyed by the block name supplied at Add.
+// A block that matched no rows appears as an empty (non-nil) slice in the
+// result map; the key is always present.
+//
+// Execute rejects blocks that carry WhereEdge constraints — those require a
+// runtime pre-pass that cannot be folded into the multi-block batch. Run such
+// queries individually with Query.Nodes.
 func (mq *MultiQuery[T]) Execute(ctx context.Context) (map[string][]T, error) {
 	if len(mq.names) == 0 {
 		return map[string][]T{}, nil
 	}
-	return nil, fmt.Errorf("multi_query: Execute not yet implemented")
+
+	rawBlocks := make([]*dg.Query, 0, len(mq.names))
+	for _, name := range mq.names {
+		block := mq.blocks[name]
+		if len(block.edges) != 0 {
+			return nil, fmt.Errorf("multi_query: block %q carries WhereEdge constraints; MultiQuery cannot batch edge-filtered blocks", name)
+		}
+		// Name the underlying dgman query so blocks do not collide on the
+		// default "data" name and so the response JSON keys are predictable.
+		block.q.Name(name)
+		rawBlocks = append(rawBlocks, block.q)
+	}
+
+	dql := dg.NewQueryBlock(rawBlocks...).String()
+	raw, err := mq.conn.QueryRaw(ctx, dql, nil)
+	if err != nil {
+		return nil, fmt.Errorf("multi_query: dgraph: %w", err)
+	}
+
+	var perBlockRaw map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &perBlockRaw); err != nil {
+		return nil, fmt.Errorf("multi_query: decoding response: %w", err)
+	}
+
+	out := make(map[string][]T, len(mq.names))
+	for _, name := range mq.names {
+		body, ok := perBlockRaw[name]
+		if !ok {
+			out[name] = []T{}
+			continue
+		}
+		var rows []T
+		if err := json.Unmarshal(body, &rows); err != nil {
+			return nil, fmt.Errorf("multi_query: decoding block %q: %w", name, err)
+		}
+		if rows == nil {
+			rows = []T{}
+		}
+		out[name] = rows
+	}
+	return out, nil
 }

@@ -273,6 +273,30 @@ func (qb *Query[T]) Raw() *dg.Query {
 	return qb.q
 }
 
+// FormatBlock renders the query as a single DQL block named name, without
+// executing it. The returned text is suitable for inclusion inside a wrapping
+// "{ ... }" multi-block request — it does not include outer braces.
+//
+// FormatBlock is the substrate behind MultiQuery; external callers can use it
+// to compose typed queries into larger hand-written DQL requests.
+//
+// Filter parameters are inlined at Filter-call time (dgman renders $N
+// placeholders into the filter string immediately), so the returned block
+// carries no unresolved variables. WhereEdge constraints are not formatted —
+// they require a runtime pre-pass and would produce no useful output here.
+func (qb *Query[T]) FormatBlock(name string) (string, error) {
+	if len(qb.edges) != 0 {
+		return "", fmt.Errorf("typed: FormatBlock cannot render a Query carrying WhereEdge constraints")
+	}
+	qb.q.Name(name)
+	wrapped := dg.NewQueryBlock(qb.q).String()
+	// QueryBlock.String() wraps the block in "{\n ... }" — strip the wrapper so
+	// the caller can compose blocks inside their own braces.
+	inner := strings.TrimPrefix(wrapped, "{\n")
+	inner = strings.TrimSuffix(inner, "}")
+	return inner, nil
+}
+
 // RawQuery is a query whose result is not a slice of T — produced by the
 // shape-changing builders Query.As, Query.Var, and Query.GroupBy. A RawQuery
 // deliberately exposes no typed node terminal: its result must be decoded by
