@@ -21,6 +21,13 @@ type Entity struct {
 	Searchable      bool    // True if the entity has a string field with index=fulltext
 	SearchField     string  // Name of the field with fulltext index (empty if not searchable)
 	SearchPredicate string  // Predicate name (json tag value) of the SearchField, empty if Searchable is false.
+
+	// FulltextPredicates lists the Dgraph predicate names of every string
+	// field tagged with a "fulltext" index, in struct declaration order.
+	// Empty (nil) when no field is so tagged. Searchable/SearchField/
+	// SearchPredicate continue to track the first such field for callers
+	// that only need a primary search target.
+	FulltextPredicates []string
 }
 
 // Field represents a single mapped field within an entity struct.
