@@ -13,9 +13,12 @@ import (
 //   - Searchable: An entity is searchable if it has a string field with
 //     "fulltext" in its index list. The SearchField is set to that field's name.
 //
-//   - FulltextPredicates: The predicate names of every string field tagged
-//     with a "fulltext" index, captured in declaration order. Searchable /
-//     SearchField / SearchPredicate continue to mirror the first such field.
+//   - FulltextPredicates: The Dgraph predicate names of every string field
+//     tagged with a "fulltext" index, captured in declaration order. Uses
+//     Field.Predicate (which honors `predicate=` overrides), not the JSON
+//     tag — so DQL `anyoftext(<predicate>, ...)` queries built from this
+//     list resolve correctly. Searchable / SearchField / SearchPredicate
+//     continue to mirror the first such field.
 //
 //   - Relationships (edges): Already detected during struct parsing based on
 //     whether the field type is []OtherEntity.
@@ -36,8 +39,11 @@ func applyInference(entity *model.Entity) {
 		if !isStringType(f.GoType) || !hasIndex(f.Indexes, "fulltext") {
 			continue
 		}
-		// Record the predicate; preserve declaration order.
-		entity.FulltextPredicates = append(entity.FulltextPredicates, f.JSONTag)
+		// Record the Dgraph predicate (not the JSON tag); preserve declaration
+		// order. f.Predicate honors `predicate=` overrides in the dgraph
+		// struct tag, so generated FulltextFields() returns names that DQL
+		// anyoftext / alloftext expressions can actually resolve.
+		entity.FulltextPredicates = append(entity.FulltextPredicates, f.Predicate)
 		// First match also wins the legacy single-field tracking.
 		if !entity.Searchable {
 			entity.Searchable = true

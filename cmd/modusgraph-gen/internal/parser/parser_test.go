@@ -559,6 +559,26 @@ type Article struct {
 			entity: "Article",
 			want:   []string{"title", "summary", "body"},
 		},
+		{
+			// Regression: FulltextPredicates must use the Dgraph predicate
+			// (honoring `predicate=` overrides), not the JSON tag. DQL
+			// `anyoftext(<predicate>, ...)` resolves against the actual
+			// predicate stored in Dgraph; using the JSON tag silently
+			// returns zero matches when the two differ.
+			name: "PredicateOverrideUsesDgraphName",
+			src: `package schema
+
+type Resource struct {
+	UID         string   ` + "`json:\"uid,omitempty\"`" + `
+	DType       []string ` + "`json:\"dgraph.type,omitempty\"`" + `
+	Name        string   ` + "`json:\"name\" dgraph:\"predicate=resourceName index=hash,fulltext\"`" + `
+	Description string   ` + "`json:\"description\" dgraph:\"index=fulltext\"`" + `
+	DisplayName string   ` + "`json:\"displayName\" dgraph:\"predicate=resourceDisplayName index=fulltext\"`" + `
+}
+`,
+			entity: "Resource",
+			want:   []string{"resourceName", "description", "resourceDisplayName"},
+		},
 	}
 
 	for _, tc := range cases {
