@@ -83,3 +83,45 @@ func TestMultiQueryExecuteEmptyReturnsEmptyMap(t *testing.T) {
 		t.Fatalf("expected empty map, got %v", results)
 	}
 }
+
+// renamed exercises the predicate-vs-json-tag remap. Dgraph returns the
+// "thingName" key (the predicate name) but the struct's JSON tag is
+// "name"; MultiQuery.Execute must remap before unmarshaling so Name
+// populates.
+type renamed struct {
+	UID   string   `json:"uid,omitempty"`
+	DType []string `json:"dgraph.type,omitempty"`
+	Name  string   `json:"name,omitempty" dgraph:"predicate=thingName index=hash,fulltext"`
+	Qty   int      `json:"qty,omitempty" dgraph:"index=int"`
+}
+
+func TestMultiQueryExecuteRemapsPredicateKeys(t *testing.T) {
+	ctx := context.Background()
+	conn := newConn(t)
+	c := typed.NewClient[renamed](conn)
+
+	for _, w := range []*renamed{
+		{Name: "alpha", Qty: 1},
+		{Name: "beta", Qty: 2},
+	} {
+		if err := c.Add(ctx, w); err != nil {
+			t.Fatalf("Add %s: %v", w.Name, err)
+		}
+	}
+
+	mq := typed.NewMultiQuery[renamed](conn)
+	mq.Add("all", c.Query(ctx))
+	results, err := mq.Execute(ctx)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	rows := results["all"]
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2", len(rows))
+	}
+	for _, r := range rows {
+		if r.Name == "" {
+			t.Fatalf("Name not populated; multi-block response was not remapped from predicate key: %+v", r)
+		}
+	}
+}
