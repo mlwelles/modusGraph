@@ -47,3 +47,16 @@ func (c *{{ $E }}Client) Delete(ctx context.Context, uid string) error {
 func (c *{{ $E }}Client) Query(ctx context.Context) *{{ $E }}Query {
 	return &{{ $E }}Query{typed: c.typed.Query(ctx)}
 }
+
+// FulltextFields returns the DQL predicate names of {{ $E }} fields tagged
+// with a "fulltext" index, in struct declaration order. Consumers iterate
+// this list to build cross-field fulltext queries (e.g. typed.MultiQuery
+// search) without hardcoding the field set; adding or removing a fulltext
+// tag in the schema flows through on next `make generate`.
+func (c *{{ $E }}Client) FulltextFields() []string {
+	return []string{
+		{{- range .Entity.FulltextPredicates }}
+		{{ printf "%q" . }},
+		{{- end }}
+	}
+}

@@ -1291,6 +1291,141 @@ func TestGenerate_WrapperQueryByField(t *testing.T) {
 	}
 }
 
+// TestGenerate_FulltextFields verifies that every <Entity>Client gains a
+// FulltextFields() []string method whose body lists the DQL predicate names
+// of fulltext-tagged string fields in declaration order — including the
+// empty-slice case for entities with no fulltext-tagged fields.
+func TestGenerate_FulltextFields(t *testing.T) {
+	srcDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(srcDir, "go.mod"),
+		[]byte("module example.com/test\n\ngo 1.25\n"), 0o644); err != nil {
+		t.Fatalf("writing go.mod: %v", err)
+	}
+	// Three entities span the zero/one/many cases the consumer cares about.
+	src := "package schema\n\n" +
+		"type Plain struct {\n" +
+		"\tUID   string   `json:\"uid,omitempty\"`\n" +
+		"\tDType []string `json:\"dgraph.type,omitempty\"`\n" +
+		"\tLabel string   `json:\"label\"`\n" +
+		"}\n\n" +
+		"type Note struct {\n" +
+		"\tUID   string   `json:\"uid,omitempty\"`\n" +
+		"\tDType []string `json:\"dgraph.type,omitempty\"`\n" +
+		"\tTitle string   `json:\"title\" dgraph:\"index=hash,fulltext\"`\n" +
+		"\tBody  string   `json:\"body\"`\n" +
+		"}\n\n" +
+		"type Article struct {\n" +
+		"\tUID     string   `json:\"uid,omitempty\"`\n" +
+		"\tDType   []string `json:\"dgraph.type,omitempty\"`\n" +
+		"\tTitle   string   `json:\"title\" dgraph:\"index=hash,fulltext\"`\n" +
+		"\tSummary string   `json:\"summary\" dgraph:\"index=fulltext\"`\n" +
+		"\tBody    string   `json:\"body\" dgraph:\"index=fulltext,trigram\"`\n" +
+		"\tSlug    string   `json:\"slug\" dgraph:\"index=hash\"`\n" +
+		"}\n"
+	if err := os.WriteFile(filepath.Join(srcDir, "schema.go"), []byte(src), 0o644); err != nil {
+		t.Fatalf("writing schema.go: %v", err)
+	}
+	pkg, err := parser.Parse(srcDir)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	entityDir := filepath.Join(t.TempDir(), "entity")
+	if err := os.MkdirAll(entityDir, 0o755); err != nil {
+		t.Fatalf("mkdir entityDir: %v", err)
+	}
+	cfg := Config{
+		SchemaDir:               srcDir,
+		SchemaClientDir:         srcDir,
+		EntityDir:               entityDir,
+		EntityClientDir:         entityDir,
+		EntityPackageName:       "entity",
+		EntityClientPackageName: "entity",
+		SchemaClientPackageName: "schema",
+		SchemaAlias:             "schema",
+		SchemaImportPath:        "example.com/test",
+		CLIName:                 "test",
+	}
+	if err := Generate(pkg, cfg); err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+
+	// Zero fulltext fields → empty slice literal. gofmt collapses an empty
+	// composite literal onto a single line, so the canonical form is `[]string{}`.
+	plain := mustReadGen(t, entityDir, "plain_gen.go")
+	plainBody := fulltextFieldsBody(t, plain, "PlainClient")
+	for _, want := range []string{
+		`func (c *PlainClient) FulltextFields() []string {`,
+		`return []string{}`,
+	} {
+		if !strings.Contains(plainBody, want) {
+			t.Errorf("plain_gen.go FulltextFields missing %q; got:\n%s", want, plainBody)
+		}
+	}
+
+	// One fulltext field → exactly one predicate.
+	note := mustReadGen(t, entityDir, "note_gen.go")
+	noteBody := fulltextFieldsBody(t, note, "NoteClient")
+	if !strings.Contains(noteBody, `func (c *NoteClient) FulltextFields() []string {`) {
+		t.Errorf("note_gen.go missing FulltextFields signature; got:\n%s", noteBody)
+	}
+	if !strings.Contains(noteBody, `"title"`) {
+		t.Errorf("note_gen.go FulltextFields must include \"title\"; got:\n%s", noteBody)
+	}
+
+	// Multiple fulltext fields → predicates in declaration order.
+	article := mustReadGen(t, entityDir, "article_gen.go")
+	articleBody := fulltextFieldsBody(t, article, "ArticleClient")
+	if !strings.Contains(articleBody, `func (c *ArticleClient) FulltextFields() []string {`) {
+		t.Errorf("article_gen.go missing FulltextFields signature; got:\n%s", articleBody)
+	}
+	for _, want := range []string{`"title"`, `"summary"`, `"body"`} {
+		if !strings.Contains(articleBody, want) {
+			t.Errorf("article_gen.go FulltextFields missing %q; got:\n%s", want, articleBody)
+		}
+	}
+	// Declaration order must hold: title before summary before body.
+	if i, j, k := strings.Index(articleBody, `"title"`),
+		strings.Index(articleBody, `"summary"`),
+		strings.Index(articleBody, `"body"`); !(i < j && j < k) {
+		t.Errorf("article_gen.go FulltextFields predicates out of declaration order (title/summary/body); got:\n%s", articleBody)
+	}
+	// The unindexed "slug" and non-fulltext index names must not leak in.
+	for _, notWant := range []string{`"slug"`, `"hash"`, `"trigram"`} {
+		if strings.Contains(articleBody, notWant) {
+			t.Errorf("article_gen.go FulltextFields must not include %q; got:\n%s", notWant, articleBody)
+		}
+	}
+}
+
+// fulltextFieldsBody returns the substring of src that starts at the
+// FulltextFields method declaration for clientType and ends at the matching
+// closing brace of the method body. It is a test helper that lets assertions
+// scope themselves to the relevant method without false positives from
+// surrounding generated code. Fails the test if the method is not found.
+func fulltextFieldsBody(t *testing.T, src, clientType string) string {
+	t.Helper()
+	sig := "func (c *" + clientType + ") FulltextFields() []string {"
+	i := strings.Index(src, sig)
+	if i < 0 {
+		t.Fatalf("FulltextFields signature for %s not found in:\n%s", clientType, src)
+	}
+	// Walk braces to find the matching closer.
+	depth := 0
+	for j := i; j < len(src); j++ {
+		switch src[j] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return src[i : j+1]
+			}
+		}
+	}
+	t.Fatalf("unbalanced braces while scanning FulltextFields for %s", clientType)
+	return ""
+}
+
 // TestGenerate_WrapperQueryByField_UUIDType checks that a scalars.UUID-typed
 // indexed field gets a By<Field> method using filter.UUID.
 func TestGenerate_WrapperQueryByField_UUIDType(t *testing.T) {

@@ -484,6 +484,122 @@ func TestParseMoviesPackage(t *testing.T) {
 			t.Error("Performance should NOT be searchable")
 		}
 	})
+
+	t.Run("FulltextPredicatesMoviesFixture", func(t *testing.T) {
+		// Every searchable movies entity has exactly one fulltext-tagged
+		// string field ("name") — so its FulltextPredicates slice is
+		// exactly ["name"]. Performance has none → empty slice.
+		single := []string{"Film", "Director", "Actor", "Genre", "Country", "Rating", "ContentRating", "Location"}
+		for _, name := range single {
+			e := entityMap[name]
+			if e == nil {
+				t.Errorf("entity %q not found", name)
+				continue
+			}
+			if got, want := e.FulltextPredicates, []string{"name"}; !equalStrings(got, want) {
+				t.Errorf("entity %q FulltextPredicates = %v, want %v", name, got, want)
+			}
+		}
+		if perf := entityMap["Performance"]; perf != nil && len(perf.FulltextPredicates) != 0 {
+			t.Errorf("Performance.FulltextPredicates = %v, want empty", perf.FulltextPredicates)
+		}
+	})
+}
+
+// TestApplyInference_FulltextPredicates exercises the parser's collection of
+// every fulltext-tagged string predicate (in declaration order) on an entity
+// — the zero, one, and many cases.
+func TestApplyInference_FulltextPredicates(t *testing.T) {
+	cases := []struct {
+		name   string
+		src    string
+		entity string
+		want   []string
+	}{
+		{
+			name: "ZeroFulltextFields",
+			src: `package schema
+
+type Plain struct {
+	UID   string   ` + "`json:\"uid,omitempty\"`" + `
+	DType []string ` + "`json:\"dgraph.type,omitempty\"`" + `
+	Label string   ` + "`json:\"label\"`" + `
+}
+`,
+			entity: "Plain",
+			want:   nil,
+		},
+		{
+			name: "OneFulltextField",
+			src: `package schema
+
+type Note struct {
+	UID   string   ` + "`json:\"uid,omitempty\"`" + `
+	DType []string ` + "`json:\"dgraph.type,omitempty\"`" + `
+	Title string   ` + "`json:\"title\" dgraph:\"index=hash,fulltext\"`" + `
+	Body  string   ` + "`json:\"body\"`" + `
+}
+`,
+			entity: "Note",
+			want:   []string{"title"},
+		},
+		{
+			name: "MultipleFulltextFieldsDeclarationOrder",
+			src: `package schema
+
+type Article struct {
+	UID     string   ` + "`json:\"uid,omitempty\"`" + `
+	DType   []string ` + "`json:\"dgraph.type,omitempty\"`" + `
+	Title   string   ` + "`json:\"title\" dgraph:\"index=hash,fulltext\"`" + `
+	Summary string   ` + "`json:\"summary\" dgraph:\"index=fulltext\"`" + `
+	Body    string   ` + "`json:\"body\" dgraph:\"index=fulltext,trigram\"`" + `
+	Slug    string   ` + "`json:\"slug\" dgraph:\"index=hash\"`" + `
+}
+`,
+			entity: "Article",
+			want:   []string{"title", "summary", "body"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			mustWriteFile(t, filepath.Join(dir, "go.mod"), "module example.com/test\n\ngo 1.25\n")
+			mustWriteFile(t, filepath.Join(dir, "schema.go"), tc.src)
+
+			pkg, err := Parse(dir)
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			var got *model.Entity
+			for i := range pkg.Entities {
+				if pkg.Entities[i].Name == tc.entity {
+					got = &pkg.Entities[i]
+					break
+				}
+			}
+			if got == nil {
+				t.Fatalf("entity %q not found in parsed package", tc.entity)
+			}
+			if !equalStrings(got.FulltextPredicates, tc.want) {
+				t.Errorf("%s.FulltextPredicates = %v, want %v", tc.entity, got.FulltextPredicates, tc.want)
+			}
+		})
+	}
+}
+
+// equalStrings reports whether two string slices have equal contents.
+// A nil slice and an empty slice compare equal.
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestParseDgraphTag(t *testing.T) {
