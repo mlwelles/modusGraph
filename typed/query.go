@@ -7,6 +7,7 @@ package typed
 
 import (
 	"context"
+	"fmt"
 	"iter"
 	"strconv"
 	"strings"
@@ -137,6 +138,19 @@ func (qb *Query[T]) Vars(funcDef string, vars map[string]string) *Query[T] {
 // <Entity>Query.Where<Edge> methods.
 func (qb *Query[T]) WhereEdge(predicate, filter string, params ...any) *Query[T] {
 	qb.edges = append(qb.edges, edgeFilter{predicate: predicate, filter: filter, params: params})
+	return qb
+}
+
+// WhereAnyOfText adds an @filter(anyoftext(predicate, $1)) clause.
+// Equivalent to: q.Filter("anyoftext(predicate, $1)", term).
+func (qb *Query[T]) WhereAnyOfText(predicate, term string) *Query[T] {
+	qb.q.Filter(fmt.Sprintf("anyoftext(%s, $1)", predicate), term)
+	return qb
+}
+
+// WhereAllOfText adds an @filter(alloftext(predicate, $1)) clause.
+func (qb *Query[T]) WhereAllOfText(predicate, term string) *Query[T] {
+	qb.q.Filter(fmt.Sprintf("alloftext(%s, $1)", predicate), term)
 	return qb
 }
 
