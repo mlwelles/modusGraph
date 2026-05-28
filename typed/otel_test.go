@@ -80,3 +80,29 @@ func TestClient_CRUD_EmitsSpans(t *testing.T) {
 		}
 	}
 }
+
+func TestQuery_Terminals_EmitSpans(t *testing.T) {
+	sr := recordSpans(t)
+	ctx := context.Background()
+	c := typed.NewClient[widget](newConn(t))
+	if err := c.Add(ctx, &widget{Name: "a", Qty: 1}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	if _, err := c.Query(ctx).Nodes(); err != nil {
+		t.Fatalf("Nodes: %v", err)
+	}
+	if _, err := c.Query(ctx).First(); err != nil {
+		t.Fatalf("First: %v", err)
+	}
+
+	var querySpans int
+	for _, s := range sr.Ended() {
+		if s.Name() == "modusgraph.query" {
+			querySpans++
+		}
+	}
+	if querySpans < 2 {
+		t.Fatalf("want >=2 modusgraph.query spans, got %d (%v)", querySpans, spanNames(sr))
+	}
+}
