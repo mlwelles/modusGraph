@@ -22,20 +22,25 @@ import (
 const tracerName = "github.com/matthewmcneely/modusgraph/typed"
 
 // entityName returns the unqualified Go type name of T (for example "Resource"),
-// used as the db.collection attribute.
+// used as the db.collection.name attribute.
 func entityName[T any]() string {
 	return reflect.TypeFor[T]().Name()
 }
 
 // startDBSpan opens a span named "modusgraph.<op>" with Dgraph semantic
-// attributes. Callers must defer endDBSpan(span, err).
+// attributes. Callers must use a closure defer —
+// defer func() { endDBSpan(span, err) }() — so the deferred call observes the
+// final (named) error value.
 func startDBSpan(ctx context.Context, op, collection string) (context.Context, trace.Span) {
 	return otel.Tracer(tracerName).Start(ctx, "modusgraph."+op,
 		trace.WithSpanKind(trace.SpanKindClient),
 		trace.WithAttributes(
+			// db.operation.name and db.collection.name follow the OTel database
+			// semantic conventions; the older db.operation/db.collection keys are
+			// deprecated.
 			attribute.String("db.system", "dgraph"),
-			attribute.String("db.operation", op),
-			attribute.String("db.collection", collection),
+			attribute.String("db.operation.name", op),
+			attribute.String("db.collection.name", collection),
 		),
 	)
 }
