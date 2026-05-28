@@ -106,6 +106,15 @@ func (c *PerformanceClient) Query(ctx context.Context) *PerformanceQuery {
 	return &PerformanceQuery{typed: c.typed.Query(ctx)}
 }
 
+// FulltextFields returns the DQL predicate names of Performance fields tagged
+// with a "fulltext" index, in struct declaration order. Consumers iterate
+// this list to build cross-field fulltext queries (e.g. typed.MultiQuery
+// search) without hardcoding the field set; adding or removing a fulltext
+// tag in the schema flows through on next `make generate`.
+func (c *PerformanceClient) FulltextFields() []string {
+	return []string{}
+}
+
 // PerformanceQuery is the wrapper-side fluent query builder for Performance. Builder
 // methods return *PerformanceQuery for chaining; terminal methods (Nodes, First,
 // IterNodes) execute the query and wrap results.
@@ -152,6 +161,22 @@ func (q *PerformanceQuery) After(uid string) *PerformanceQuery {
 // Cascade drops nodes missing any of the given predicates.
 func (q *PerformanceQuery) Cascade(predicates ...string) *PerformanceQuery {
 	q.typed.Cascade(predicates...)
+	return q
+}
+
+// Or keeps only Performance records matching at least one of builders. Each builder
+// receives a fresh PerformanceQuery whose By<Field>/Filter calls accumulate (ANDing
+// within the builder); the builders' filters are ORed together and the whole
+// group ANDs with the rest of the query. Builders that add no filter are
+// skipped; an empty Or is a no-op.
+func (q *PerformanceQuery) Or(builders ...func(*PerformanceQuery)) *PerformanceQuery {
+	subs := make([]*typed.Query[schema.Performance], 0, len(builders))
+	for _, build := range builders {
+		sub := &PerformanceQuery{typed: typed.NewDetachedQuery[schema.Performance]()}
+		build(sub)
+		subs = append(subs, sub.typed)
+	}
+	q.typed.OrGroup(subs...)
 	return q
 }
 

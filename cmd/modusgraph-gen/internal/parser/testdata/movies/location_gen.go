@@ -135,6 +135,17 @@ func (c *LocationClient) Query(ctx context.Context) *LocationQuery {
 	return &LocationQuery{typed: c.typed.Query(ctx)}
 }
 
+// FulltextFields returns the DQL predicate names of Location fields tagged
+// with a "fulltext" index, in struct declaration order. Consumers iterate
+// this list to build cross-field fulltext queries (e.g. typed.MultiQuery
+// search) without hardcoding the field set; adding or removing a fulltext
+// tag in the schema flows through on next `make generate`.
+func (c *LocationClient) FulltextFields() []string {
+	return []string{
+		"name",
+	}
+}
+
 // LocationQuery is the wrapper-side fluent query builder for Location. Builder
 // methods return *LocationQuery for chaining; terminal methods (Nodes, First,
 // IterNodes) execute the query and wrap results.
@@ -205,6 +216,22 @@ func (q *LocationQuery) ByEmail(filters ...filter.String) *LocationQuery {
 	if expr, params := b.Build(); expr != "" {
 		q.typed.Filter(expr, params...)
 	}
+	return q
+}
+
+// Or keeps only Location records matching at least one of builders. Each builder
+// receives a fresh LocationQuery whose By<Field>/Filter calls accumulate (ANDing
+// within the builder); the builders' filters are ORed together and the whole
+// group ANDs with the rest of the query. Builders that add no filter are
+// skipped; an empty Or is a no-op.
+func (q *LocationQuery) Or(builders ...func(*LocationQuery)) *LocationQuery {
+	subs := make([]*typed.Query[schema.Location], 0, len(builders))
+	for _, build := range builders {
+		sub := &LocationQuery{typed: typed.NewDetachedQuery[schema.Location]()}
+		build(sub)
+		subs = append(subs, sub.typed)
+	}
+	q.typed.OrGroup(subs...)
 	return q
 }
 

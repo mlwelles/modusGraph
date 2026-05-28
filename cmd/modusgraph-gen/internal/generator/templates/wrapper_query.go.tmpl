@@ -58,6 +58,20 @@ func (q *{{ $E }}Query) Where{{ accessorName . }}(filter string, params ...any) 
 	q.typed.WhereEdge("{{ .Predicate }}", filter, params...)
 	return q
 }
+
+// Where{{ accessorName . }}By keeps only {{ $E }} records that have a {{ .Predicate }}
+// edge whose target node matches the filter composed inside build — a typed
+// {{ .EdgeEntity }}Query on which By<Field>/Or calls accumulate (ANDing, with Or
+// for alternatives). It is the type-safe form of Where{{ accessorName . }}: no
+// hand-written DQL or $N placeholders.
+func (q *{{ $E }}Query) Where{{ accessorName . }}By(build func(*{{ .EdgeEntity }}Query)) *{{ $E }}Query {
+	sub := &{{ .EdgeEntity }}Query{typed: typed.NewDetachedQuery[{{ $sAlias }}.{{ .EdgeEntity }}]()}
+	build(sub)
+	if expr, params := sub.typed.CombinedFilter(); expr != "" {
+		q.typed.WhereEdge("{{ .Predicate }}", expr, params...)
+	}
+	return q
+}
 {{- end }}
 {{- range filterableScalarFields .Entity.Fields }}
 
@@ -73,6 +87,22 @@ func (q *{{ $E }}Query) By{{ accessorName . }}(filters ...filter.{{ filterTermTy
 	return q
 }
 {{- end }}
+
+// Or keeps only {{ $E }} records matching at least one of builders. Each builder
+// receives a fresh {{ $E }}Query whose By<Field>/Filter calls accumulate (ANDing
+// within the builder); the builders' filters are ORed together and the whole
+// group ANDs with the rest of the query. Builders that add no filter are
+// skipped; an empty Or is a no-op.
+func (q *{{ $E }}Query) Or(builders ...func(*{{ $E }}Query)) *{{ $E }}Query {
+	subs := make([]*typed.Query[{{ $sAlias }}.{{ $E }}], 0, len(builders))
+	for _, build := range builders {
+		sub := &{{ $E }}Query{typed: typed.NewDetachedQuery[{{ $sAlias }}.{{ $E }}]()}
+		build(sub)
+		subs = append(subs, sub.typed)
+	}
+	q.typed.OrGroup(subs...)
+	return q
+}
 
 // Nodes executes the query and returns wrapped {{ $E }} results.
 func (q *{{ $E }}Query) Nodes() ([]*{{ $E }}, error) {

@@ -152,6 +152,17 @@ func (c *DirectorClient) Query(ctx context.Context) *DirectorQuery {
 	return &DirectorQuery{typed: c.typed.Query(ctx)}
 }
 
+// FulltextFields returns the DQL predicate names of Director fields tagged
+// with a "fulltext" index, in struct declaration order. Consumers iterate
+// this list to build cross-field fulltext queries (e.g. typed.MultiQuery
+// search) without hardcoding the field set; adding or removing a fulltext
+// tag in the schema flows through on next `make generate`.
+func (c *DirectorClient) FulltextFields() []string {
+	return []string{
+		"name",
+	}
+}
+
 // DirectorQuery is the wrapper-side fluent query builder for Director. Builder
 // methods return *DirectorQuery for chaining; terminal methods (Nodes, First,
 // IterNodes) execute the query and wrap results.
@@ -209,6 +220,20 @@ func (q *DirectorQuery) WhereFilms(filter string, params ...any) *DirectorQuery 
 	return q
 }
 
+// WhereFilmsBy keeps only Director records that have a director.film
+// edge whose target node matches the filter composed inside build — a typed
+// FilmQuery on which By<Field>/Or calls accumulate (ANDing, with Or
+// for alternatives). It is the type-safe form of WhereFilms: no
+// hand-written DQL or $N placeholders.
+func (q *DirectorQuery) WhereFilmsBy(build func(*FilmQuery)) *DirectorQuery {
+	sub := &FilmQuery{typed: typed.NewDetachedQuery[schema.Film]()}
+	build(sub)
+	if expr, params := sub.typed.CombinedFilter(); expr != "" {
+		q.typed.WhereEdge("director.film", expr, params...)
+	}
+	return q
+}
+
 // ByName keeps only Director records whose name matches one
 // of filters. Terms within filters join with OR. Negated filters (Negated:true) become
 // NOT eq(...). An empty filters slice is a no-op.
@@ -218,6 +243,22 @@ func (q *DirectorQuery) ByName(filters ...filter.String) *DirectorQuery {
 	if expr, params := b.Build(); expr != "" {
 		q.typed.Filter(expr, params...)
 	}
+	return q
+}
+
+// Or keeps only Director records matching at least one of builders. Each builder
+// receives a fresh DirectorQuery whose By<Field>/Filter calls accumulate (ANDing
+// within the builder); the builders' filters are ORed together and the whole
+// group ANDs with the rest of the query. Builders that add no filter are
+// skipped; an empty Or is a no-op.
+func (q *DirectorQuery) Or(builders ...func(*DirectorQuery)) *DirectorQuery {
+	subs := make([]*typed.Query[schema.Director], 0, len(builders))
+	for _, build := range builders {
+		sub := &DirectorQuery{typed: typed.NewDetachedQuery[schema.Director]()}
+		build(sub)
+		subs = append(subs, sub.typed)
+	}
+	q.typed.OrGroup(subs...)
 	return q
 }
 

@@ -152,6 +152,17 @@ func (c *ActorClient) Query(ctx context.Context) *ActorQuery {
 	return &ActorQuery{typed: c.typed.Query(ctx)}
 }
 
+// FulltextFields returns the DQL predicate names of Actor fields tagged
+// with a "fulltext" index, in struct declaration order. Consumers iterate
+// this list to build cross-field fulltext queries (e.g. typed.MultiQuery
+// search) without hardcoding the field set; adding or removing a fulltext
+// tag in the schema flows through on next `make generate`.
+func (c *ActorClient) FulltextFields() []string {
+	return []string{
+		"name",
+	}
+}
+
 // ActorQuery is the wrapper-side fluent query builder for Actor. Builder
 // methods return *ActorQuery for chaining; terminal methods (Nodes, First,
 // IterNodes) execute the query and wrap results.
@@ -209,6 +220,20 @@ func (q *ActorQuery) WhereFilms(filter string, params ...any) *ActorQuery {
 	return q
 }
 
+// WhereFilmsBy keeps only Actor records that have a actor.film
+// edge whose target node matches the filter composed inside build — a typed
+// PerformanceQuery on which By<Field>/Or calls accumulate (ANDing, with Or
+// for alternatives). It is the type-safe form of WhereFilms: no
+// hand-written DQL or $N placeholders.
+func (q *ActorQuery) WhereFilmsBy(build func(*PerformanceQuery)) *ActorQuery {
+	sub := &PerformanceQuery{typed: typed.NewDetachedQuery[schema.Performance]()}
+	build(sub)
+	if expr, params := sub.typed.CombinedFilter(); expr != "" {
+		q.typed.WhereEdge("actor.film", expr, params...)
+	}
+	return q
+}
+
 // ByName keeps only Actor records whose name matches one
 // of filters. Terms within filters join with OR. Negated filters (Negated:true) become
 // NOT eq(...). An empty filters slice is a no-op.
@@ -218,6 +243,22 @@ func (q *ActorQuery) ByName(filters ...filter.String) *ActorQuery {
 	if expr, params := b.Build(); expr != "" {
 		q.typed.Filter(expr, params...)
 	}
+	return q
+}
+
+// Or keeps only Actor records matching at least one of builders. Each builder
+// receives a fresh ActorQuery whose By<Field>/Filter calls accumulate (ANDing
+// within the builder); the builders' filters are ORed together and the whole
+// group ANDs with the rest of the query. Builders that add no filter are
+// skipped; an empty Or is a no-op.
+func (q *ActorQuery) Or(builders ...func(*ActorQuery)) *ActorQuery {
+	subs := make([]*typed.Query[schema.Actor], 0, len(builders))
+	for _, build := range builders {
+		sub := &ActorQuery{typed: typed.NewDetachedQuery[schema.Actor]()}
+		build(sub)
+		subs = append(subs, sub.typed)
+	}
+	q.typed.OrGroup(subs...)
 	return q
 }
 

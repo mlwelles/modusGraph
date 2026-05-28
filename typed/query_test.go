@@ -161,6 +161,96 @@ func TestQuery_Filter(t *testing.T) {
 	}
 }
 
+func TestQuery_FilterAccumulatesWithAnd(t *testing.T) {
+	ctx := context.Background()
+	c := typed.NewClient[widget](newConn(t))
+
+	// Three widgets; only "beta"/9 satisfies BOTH name=="beta" and qty>=5.
+	for _, w := range []widget{
+		{Name: "alpha", Qty: 9},
+		{Name: "beta", Qty: 9},
+		{Name: "beta", Qty: 1},
+	} {
+		if err := c.Add(ctx, &w); err != nil {
+			t.Fatalf("Add %+v: %v", w, err)
+		}
+	}
+
+	// Two Filter calls must AND together, not overwrite. With last-write-wins
+	// only ge(qty, 5) survives and this returns the two qty>=5 rows instead of
+	// the single AND match.
+	got, err := c.Query(ctx).
+		Filter(`eq(name, "beta")`).
+		Filter(`ge(qty, "5")`).
+		Nodes()
+	if err != nil {
+		t.Fatalf("Filter Nodes: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("two ANDed Filters returned %d records, want 1 (name==beta AND qty>=5)", len(got))
+	}
+	if got[0].Name != "beta" || got[0].Qty != 9 {
+		t.Fatalf("got %+v, want Name=beta Qty=9", got[0])
+	}
+}
+
+func TestQuery_CombinedFilterShiftsPlaceholders(t *testing.T) {
+	q := typed.NewDetachedQuery[widget]()
+	if expr, params := q.CombinedFilter(); expr != "" || params != nil {
+		t.Fatalf("empty CombinedFilter = (%q, %v), want (\"\", nil)", expr, params)
+	}
+	q.Filter("eq(name, $1)", "a")
+	q.Filter("eq(qty, $1)", 7)
+	expr, params := q.CombinedFilter()
+	const want = "eq(name, $1) AND eq(qty, $2)"
+	if expr != want {
+		t.Fatalf("CombinedFilter expr = %q, want %q", expr, want)
+	}
+	if len(params) != 2 || params[0] != "a" || params[1] != 7 {
+		t.Fatalf("CombinedFilter params = %v, want [a 7]", params)
+	}
+}
+
+func TestQuery_OrGroup(t *testing.T) {
+	ctx := context.Background()
+	c := typed.NewClient[widget](newConn(t))
+	for _, w := range []widget{
+		{Name: "alpha", Qty: 9},
+		{Name: "beta", Qty: 9},
+		{Name: "gamma", Qty: 1},
+	} {
+		if err := c.Add(ctx, &w); err != nil {
+			t.Fatalf("Add %+v: %v", w, err)
+		}
+	}
+
+	// name == "alpha" OR name == "gamma": two of three rows.
+	got, err := c.Query(ctx).OrGroup(
+		typed.NewDetachedQuery[widget]().Filter(`eq(name, "alpha")`),
+		typed.NewDetachedQuery[widget]().Filter(`eq(name, "gamma")`),
+	).Nodes()
+	if err != nil {
+		t.Fatalf("OrGroup Nodes: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("OrGroup(alpha, gamma) returned %d rows, want 2", len(got))
+	}
+
+	// AND-of-OR: qty>=5 AND (name==alpha OR name==gamma) → only alpha/9.
+	got, err = c.Query(ctx).
+		Filter(`ge(qty, "5")`).
+		OrGroup(
+			typed.NewDetachedQuery[widget]().Filter(`eq(name, "alpha")`),
+			typed.NewDetachedQuery[widget]().Filter(`eq(name, "gamma")`),
+		).Nodes()
+	if err != nil {
+		t.Fatalf("AND-of-OR Nodes: %v", err)
+	}
+	if len(got) != 1 || got[0].Name != "alpha" {
+		t.Fatalf("qty>=5 AND (alpha OR gamma) returned %+v, want [alpha/9]", got)
+	}
+}
+
 func TestQuery_OrderAscDesc(t *testing.T) {
 	ctx := context.Background()
 	c := typed.NewClient[widget](newConn(t))
@@ -431,20 +521,23 @@ func TestQuery_TerminalRunsTwice(t *testing.T) {
 	}
 }
 
-func TestQuery_BuilderAliasesAndOverwrites(t *testing.T) {
+func TestQuery_BuilderAliasesAndAccumulates(t *testing.T) {
 	ctx := context.Background()
 	c := typed.NewClient[widget](newConn(t))
 
-	// (i) Filter overwrites: after two Filter calls only the last survives.
+	// (i) Filter accumulates: after two Filter calls both survive, ANDed.
 	q := c.Query(ctx)
 	q.Filter(`eq(name, "alpha")`)
 	q.Filter(`eq(name, "beta")`)
 	s := q.Raw().String()
-	if strings.Contains(s, `eq(name, "alpha")`) {
-		t.Fatalf("Filter did not overwrite: filter A still present in:\n%s", s)
+	if !strings.Contains(s, `eq(name, "alpha")`) {
+		t.Fatalf("Filter A dropped; want both fragments present in:\n%s", s)
 	}
 	if !strings.Contains(s, `eq(name, "beta")`) {
-		t.Fatalf("Filter B missing after overwrite; got:\n%s", s)
+		t.Fatalf("Filter B dropped; want both fragments present in:\n%s", s)
+	}
+	if !strings.Contains(s, " AND ") {
+		t.Fatalf("accumulated filters not ANDed; got:\n%s", s)
 	}
 
 	// (ii) The builder aliases: a saved reference and further mutation observe
