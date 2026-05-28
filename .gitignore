@@ -41,3 +41,6 @@ load_test/*.json
 docs/plans/
 docs/brainstorms/
 tree/
+
+# git worktrees
+.worktrees/
