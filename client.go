@@ -216,6 +216,10 @@ func WithValidator(v StructValidator) ClientOpt {
 // grpc.WithStatsHandler) without modusgraph depending on any OTel package.
 // It has no effect on the embedded (file://) engine. Options are appended
 // after those derived from the connection string.
+//
+// Clients are cached by their connection parameters plus the count of dial
+// options, so two distinct dial configurations that share the same URI and the
+// same number of dial options would share a connection pool.
 func WithGRPCDialOption(opt grpc.DialOption) ClientOpt {
 	return func(o *clientOptions) {
 		o.grpcDialOptions = append(o.grpcDialOptions, opt)
@@ -351,8 +355,9 @@ func (c client) key() string {
 	if c.options.validator != nil {
 		validatorKey = fmt.Sprintf("%p", c.options.validator)
 	}
-	return fmt.Sprintf("%s:%t:%d:%d:%d:%s:%s", c.uri, c.options.autoSchema, c.options.poolSize,
-		c.options.maxEdgeTraversal, c.options.cacheSizeMB, c.options.namespace, validatorKey)
+	return fmt.Sprintf("%s:%t:%d:%d:%d:%s:%s:%d", c.uri, c.options.autoSchema, c.options.poolSize,
+		c.options.maxEdgeTraversal, c.options.cacheSizeMB, c.options.namespace, validatorKey,
+		len(c.options.grpcDialOptions))
 }
 
 func checkPointer(obj any) error {
