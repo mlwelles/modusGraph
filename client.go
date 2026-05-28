@@ -9,8 +9,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -20,6 +22,8 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/go-playground/validator/v10"
 	"github.com/matthewmcneely/modusgraph/load"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 // SelfValidator is implemented by generated entities with private fields that
@@ -145,6 +149,7 @@ type clientOptions struct {
 	namespace        string
 	logger           logr.Logger
 	validator        StructValidator
+	grpcDialOptions  []grpc.DialOption
 }
 
 // ClientOpt is a function that configures a client
@@ -203,6 +208,21 @@ func WithCacheSizeMB(size int) ClientOpt {
 func WithValidator(v StructValidator) ClientOpt {
 	return func(o *clientOptions) {
 		o.validator = v
+	}
+}
+
+// WithGRPCDialOption adds a grpc.DialOption to the remote Dgraph connection.
+// Consumers pass instrumentation (for example otelgrpc.NewClientHandler via
+// grpc.WithStatsHandler) without modusgraph depending on any OTel package.
+// It has no effect on the embedded (file://) engine. Options are appended
+// after those derived from the connection string.
+//
+// Clients are cached by their connection parameters plus the count of dial
+// options, so two distinct dial configurations that share the same URI and the
+// same number of dial options would share a connection pool.
+func WithGRPCDialOption(opt grpc.DialOption) ClientOpt {
+	return func(o *clientOptions) {
+		o.grpcDialOptions = append(o.grpcDialOptions, opt)
 	}
 }
 
@@ -272,7 +292,10 @@ func NewClient(uri string, opts ...ClientOpt) (Client, error) {
 	case strings.HasPrefix(uri, dgraphURIPrefix):
 		client.pool = newClientPool(options.poolSize, func() (*dgo.Dgraph, error) {
 			client.logger.V(2).Info("Opening new Dgraph connection", "uri", uri)
-			return dgo.Open(uri)
+			if len(options.grpcDialOptions) == 0 {
+				return dgo.Open(uri) // unchanged path; preserves all behavior
+			}
+			return openWithDialOptions(uri, options.grpcDialOptions)
 		}, client.logger)
 		dg.SetLogger(client.logger)
 		clientMap[key] = client
@@ -332,8 +355,9 @@ func (c client) key() string {
 	if c.options.validator != nil {
 		validatorKey = fmt.Sprintf("%p", c.options.validator)
 	}
-	return fmt.Sprintf("%s:%t:%d:%d:%d:%s:%s", c.uri, c.options.autoSchema, c.options.poolSize,
-		c.options.maxEdgeTraversal, c.options.cacheSizeMB, c.options.namespace, validatorKey)
+	return fmt.Sprintf("%s:%t:%d:%d:%d:%s:%s:%d", c.uri, c.options.autoSchema, c.options.poolSize,
+		c.options.maxEdgeTraversal, c.options.cacheSizeMB, c.options.namespace, validatorKey,
+		len(c.options.grpcDialOptions))
 }
 
 func checkPointer(obj any) error {
@@ -602,6 +626,85 @@ func (c client) DgraphClient() (client *dgo.Dgraph, cleanup func(), err error) {
 		}
 	}
 	return client, cleanup, err
+}
+
+// openWithDialOptions mirrors dgo.Open's connection-string parsing and appends
+// extra grpc.DialOptions. Replace with a variadic dgo.Open once that ships
+// upstream (modusGraph-first follow-up).
+func openWithDialOptions(connStr string, extra []grpc.DialOption) (*dgo.Dgraph, error) {
+	u, err := url.Parse(connStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid connection string: %w", err)
+	}
+
+	params, err := url.ParseQuery(u.RawQuery)
+	if err != nil {
+		return nil, fmt.Errorf("malformed connection string: %w", err)
+	}
+
+	apiKey := params.Get("apikey")
+	bearerToken := params.Get("bearertoken")
+	sslMode := params.Get("sslmode")
+	nsID := params.Get("namespace")
+
+	if u.Scheme != "dgraph" {
+		return nil, fmt.Errorf("invalid scheme: must start with dgraph://")
+	}
+	if apiKey != "" && bearerToken != "" {
+		return nil, errors.New("invalid connection string: both apikey and bearertoken cannot be provided")
+	}
+	parts := strings.Split(u.Host, ":")
+	if len(parts) != 2 {
+		return nil, errors.New("invalid connection string: host url must have both host and port")
+	}
+	if parts[1] == "" {
+		return nil, errors.New("invalid connection string: missing port after port-separator colon")
+	}
+
+	var opts []dgo.ClientOption
+	if apiKey != "" {
+		opts = append(opts, dgo.WithDgraphAPIKey(apiKey))
+	}
+	if bearerToken != "" {
+		opts = append(opts, dgo.WithBearerToken(bearerToken))
+	}
+
+	if sslMode == "" {
+		sslMode = "disable"
+	}
+	switch sslMode {
+	case "disable":
+		opts = append(opts, dgo.WithGrpcOption(grpc.WithTransportCredentials(insecure.NewCredentials())))
+	case "require":
+		opts = append(opts, dgo.WithSkipTLSVerify())
+	case "verify-ca":
+		opts = append(opts, dgo.WithSystemCertPool())
+	default:
+		return nil, fmt.Errorf("invalid SSL mode: %s (must be one of disable, require, verify-ca)", sslMode)
+	}
+
+	if nsID != "" {
+		id, err := strconv.ParseUint(nsID, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid namespace ID: %w", err)
+		}
+		opts = append(opts, dgo.WithNamespace(id))
+	}
+
+	if u.User != nil {
+		username := u.User.Username()
+		password, _ := u.User.Password()
+		if username == "" || password == "" {
+			return nil, errors.New("invalid connection string: both username and password must be provided")
+		}
+		opts = append(opts, dgo.WithACLCreds(username, password))
+	}
+
+	for _, o := range extra {
+		opts = append(opts, dgo.WithGrpcOption(o))
+	}
+
+	return dgo.NewClient(u.Host, opts...)
 }
 
 type clientPool struct {

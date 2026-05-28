@@ -190,6 +190,26 @@ client, err := mg.NewClient(uri, mg.WithValidator(validate))
 
 See the [validator test](validate_test.go) for more examples.
 
+#### WithGRPCDialOption(grpc.DialOption)
+
+Adds a `grpc.DialOption` to the remote (`dgraph://`) connection. Use it to attach
+instrumentation — for example an OpenTelemetry stats handler — without modusGraph taking a
+dependency on any OpenTelemetry package: the consumer supplies the handler.
+
+```go
+import (
+    "go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
+    "google.golang.org/grpc"
+)
+
+client, err := mg.NewClient("dgraph://localhost:9080",
+    mg.WithGRPCDialOption(grpc.WithStatsHandler(otelgrpc.NewClientHandler())),
+)
+```
+
+The option has no effect on the embedded (`file://`) engine. When no dial option is supplied the
+connection is opened exactly as before. See [Observability](#observability) for the full picture.
+
 You can combine multiple options:
 
 ```go
@@ -756,6 +776,42 @@ func WithStudioName(v string) StudioOption {
 v := &movies.Studio{Founded: c.Founded}
 v.SetName(c.Name)
 ```
+
+## Observability
+
+modusGraph emits OpenTelemetry **trace spans** for database operations and lets you attach
+gRPC-level instrumentation to the remote connection. It does this through the OpenTelemetry
+**API only** — it never installs an SDK — so instrumentation is **no-op by default** and costs
+nothing unless the host process opts in.
+
+### DB-operation spans (no-op by default)
+
+The `typed` package wraps each CRUD and query terminal in a span named `modusgraph.<operation>`
+(`modusgraph.get`, `modusgraph.add`, `modusgraph.update`, `modusgraph.upsert`, `modusgraph.delete`,
+`modusgraph.query`) carrying `db.system`, `db.operation.name`, and `db.collection.name` attributes.
+With no OpenTelemetry SDK installed in the host process, these spans are no-ops: a few interface
+dispatches, no recording, no goroutines, no export, and **no SDK dependency forced on consumers
+that don't want it.** A consumer activates them by installing an SDK `TracerProvider` in `main`
+(the application's responsibility, not the library's).
+
+### gRPC instrumentation
+
+Attach a stats handler to the remote connection with
+[`WithGRPCDialOption`](#withgrpcdialoptiongrpcdialoption):
+
+```go
+import (
+    "go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
+    "google.golang.org/grpc"
+)
+
+client, err := mg.NewClient("dgraph://localhost:9080",
+    mg.WithGRPCDialOption(grpc.WithStatsHandler(otelgrpc.NewClientHandler())),
+)
+```
+
+This emits client-side gRPC spans for the Dgraph calls and propagates trace context over the wire.
+modusGraph imports no OpenTelemetry package for this — you supply the handler.
 
 ## Limitations
 
