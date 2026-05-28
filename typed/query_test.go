@@ -1227,3 +1227,68 @@ func TestQuery_WhereEdgeIterNodes(t *testing.T) {
 		t.Fatalf("WhereEdge IterNodes streamed %d owners, want 2", seen)
 	}
 }
+
+func TestQuery_UIDRootsAtNode(t *testing.T) {
+	ctx := context.Background()
+	c := typed.NewClient[widget](newConn(t))
+
+	w := &widget{Name: "sprocket", Qty: 3}
+	if err := c.Add(ctx, w); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	got, err := c.Query(ctx).UID(w.UID).Nodes()
+	if err != nil {
+		t.Fatalf("Nodes: %v", err)
+	}
+	if len(got) != 1 || got[0].Name != "sprocket" {
+		t.Fatalf("UID query returned %+v, want one widget named sprocket", got)
+	}
+}
+
+func TestQuery_NodesAndCountReturnsTotal(t *testing.T) {
+	ctx := context.Background()
+	c := typed.NewClient[widget](newConn(t))
+
+	for i := 0; i < 3; i++ {
+		if err := c.Add(ctx, &widget{Name: "w", Qty: i}); err != nil {
+			t.Fatalf("Add: %v", err)
+		}
+	}
+
+	nodes, count, err := c.Query(ctx).NodesAndCount()
+	if err != nil {
+		t.Fatalf("NodesAndCount: %v", err)
+	}
+	if count != 3 || len(nodes) != 3 {
+		t.Fatalf("got count=%d len=%d, want 3 and 3", count, len(nodes))
+	}
+}
+
+func TestQuery_AllSetsTraversalDepth(t *testing.T) {
+	ctx := context.Background()
+	c := typed.NewClient[widget](newConn(t))
+	if err := c.Add(ctx, &widget{Name: "deep", Qty: 1}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	// All(1) overrides the default traversal depth for this query; the call
+	// must chain and the query must still execute and decode.
+	got, err := c.Query(ctx).All(1).Nodes()
+	if err != nil {
+		t.Fatalf("Nodes with All(1): %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d widgets, want 1", len(got))
+	}
+}
+
+func TestQuery_StringRendersDQL(t *testing.T) {
+	ctx := context.Background()
+	c := typed.NewClient[widget](newConn(t))
+
+	dql := c.Query(ctx).Filter("eq(name, $1)", "sprocket").String()
+	if !strings.Contains(dql, "widget") {
+		t.Fatalf("String() = %q, want it to mention the widget type", dql)
+	}
+}

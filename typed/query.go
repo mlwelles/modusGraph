@@ -354,10 +354,49 @@ func (qb *Query[T]) IterNodes() iter.Seq2[*T, error] {
 }
 
 // Raw returns the underlying dgman query for operations Query does not wrap
-// (for example UID, Query, NodesAndCount). Raw does not carry WhereEdge
+// (for example the raw-selection Query method). Raw does not carry WhereEdge
 // constraints — those are resolved only when a terminal runs.
 func (qb *Query[T]) Raw() *dg.Query {
 	return qb.q
+}
+
+// UID roots the query at a specific node UID. Results still decode into []T.
+func (qb *Query[T]) UID(uid string) *Query[T] {
+	qb.q.UID(uid)
+	return qb
+}
+
+// All sets the edge-traversal depth for this query, overriding the client's
+// default maxEdgeTraversal. Use a small depth to stay under Dgraph's 4MB gRPC
+// limit on highly-connected entities.
+func (qb *Query[T]) All(depth int) *Query[T] {
+	qb.q.All(depth)
+	return qb
+}
+
+// NodesAndCount executes the query and returns the matching records together
+// with the total count (useful for pagination totals). Like Nodes, it runs the
+// WhereEdge pre-pass first when edge constraints are present.
+func (qb *Query[T]) NodesAndCount() ([]T, int, error) {
+	matched, err := qb.resolveRoots()
+	if err != nil {
+		return nil, 0, err
+	}
+	if !matched {
+		return nil, 0, nil
+	}
+	var out []T
+	count, err := qb.q.NodesAndCount(&out)
+	if err != nil {
+		return nil, 0, err
+	}
+	return out, count, nil
+}
+
+// String renders the generated DQL without executing it. WhereEdge constraints
+// are not reflected — they are resolved only when a terminal runs.
+func (qb *Query[T]) String() string {
+	return qb.q.String()
 }
 
 // FormatBlock renders the query as a single DQL block named name, without
