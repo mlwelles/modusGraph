@@ -3,11 +3,16 @@
 package movies
 
 import (
+	"context"
+
+	"github.com/dgraph-io/dgo/v250"
 	"github.com/matthewmcneely/modusgraph"
+	"github.com/matthewmcneely/modusgraph/load"
 )
 
 // Client is a top-level wrapper-side client. It holds a modusgraph.Client
 // connection and exposes per-entity wrapper sub-clients that all share it.
+// Global operations are exposed directly as delegating methods.
 type Client struct {
 	conn          modusgraph.Client
 	Actor         *ActorClient
@@ -38,9 +43,51 @@ func NewClient(conn modusgraph.Client) *Client {
 	return c
 }
 
-// GraphClient returns the underlying modusgraph.Client connection. Use it for
-// operations the typed clients do not wrap — for example QueryRaw, DropAll,
-// WithRetry, and Close.
-func (c *Client) GraphClient() modusgraph.Client {
-	return c.conn
+// ModusGraphClient returns the underlying modusgraph.Client connection. Prefer
+// the delegating methods below; reach for this only for operations not
+// surfaced directly.
+func (c *Client) ModusGraphClient() modusgraph.Client { return c.conn }
+
+// Close releases the underlying database connection.
+func (c *Client) Close() { c.conn.Close() }
+
+// UpdateSchema applies schema derived from the provided struct types.
+func (c *Client) UpdateSchema(ctx context.Context, obj ...any) error {
+	return c.conn.UpdateSchema(ctx, obj...)
+}
+
+// AlterSchema applies a raw DQL schema string.
+func (c *Client) AlterSchema(ctx context.Context, schema string) error {
+	return c.conn.AlterSchema(ctx, schema)
+}
+
+// GetSchema returns the current Dgraph schema as a DQL string.
+func (c *Client) GetSchema(ctx context.Context) (string, error) {
+	return c.conn.GetSchema(ctx)
+}
+
+// DropAll removes all data and schema.
+func (c *Client) DropAll(ctx context.Context) error { return c.conn.DropAll(ctx) }
+
+// DropData removes all data but keeps the schema.
+func (c *Client) DropData(ctx context.Context) error { return c.conn.DropData(ctx) }
+
+// QueryRaw executes a raw DQL query.
+func (c *Client) QueryRaw(ctx context.Context, query string, vars map[string]string) ([]byte, error) {
+	return c.conn.QueryRaw(ctx, query, vars)
+}
+
+// DgraphClient returns a raw dgo client and a cleanup function from the pool.
+func (c *Client) DgraphClient() (*dgo.Dgraph, func(), error) {
+	return c.conn.DgraphClient()
+}
+
+// WithRetry executes fn with retry on aborted transactions.
+func (c *Client) WithRetry(ctx context.Context, policy modusgraph.RetryPolicy, fn func() error) error {
+	return c.conn.WithRetry(ctx, policy, fn)
+}
+
+// LoadData loads RDF or JSON files from dataDir.
+func (c *Client) LoadData(ctx context.Context, dataDir string, opts ...load.Option) error {
+	return c.conn.LoadData(ctx, dataDir, opts...)
 }

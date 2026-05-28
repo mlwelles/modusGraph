@@ -636,13 +636,15 @@ type Film struct {
 		`"github.com/matthewmcneely/modusgraph"`,
 		`"github.com/matthewmcneely/modusgraph/typed"`,
 		`type Client struct {`,
-		`GraphClient modusgraph.Client`,
+		`ModusGraphClient modusgraph.Client`,
 		`*typed.Client[Studio]`,
 		`*typed.Client[Film]`,
 		`func NewClient(conn modusgraph.Client) *Client {`,
-		`GraphClient: conn,`,
+		`ModusGraphClient: conn,`,
 		`typed.NewClient[Studio](conn)`,
 		`typed.NewClient[Film](conn)`,
+		`func (c *Client) DropAll(ctx context.Context) error`,
+		`func (c *Client) AlterSchema(ctx context.Context, schema string) error`,
 	} {
 		if !strings.Contains(data, want) {
 			t.Errorf("client_gen.go missing: %q\n---file---\n%s", want, data)
@@ -989,8 +991,10 @@ type Film struct {
 		`func NewClient(conn modusgraph.Client) *Client`,
 		`c.Studio = NewStudioClient(conn)`,
 		`c.Film = NewFilmClient(conn)`,
-		`func (c *Client) GraphClient() modusgraph.Client`,
+		`func (c *Client) ModusGraphClient() modusgraph.Client`,
 		`return c.conn`,
+		`func (c *Client) DropAll(ctx context.Context) error`,
+		`func (c *Client) AlterSchema(ctx context.Context, schema string) error`,
 	} {
 		if !strings.Contains(data, want) {
 			t.Errorf("client_gen.go (wrapper side) missing: %q\n---file---\n%s", want, data)

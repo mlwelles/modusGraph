@@ -80,6 +80,11 @@ type Client interface {
 	// Pass one or more objects that will be used as templates for the schema.
 	UpdateSchema(context.Context, ...any) error
 
+	// AlterSchema applies a raw Dgraph Schema Definition Language string, bypassing
+	// dgman's additive-only path. Use for predicate renames, type drops, or any
+	// alter that UpdateSchema cannot express.
+	AlterSchema(ctx context.Context, schema string) error
+
 	// GetSchema retrieves the current schema definition from the database.
 	// Returns a string containing the full schema in Dgraph Schema Definition Language.
 	GetSchema(context.Context) (string, error)
@@ -543,6 +548,19 @@ func (c client) UpdateSchema(ctx context.Context, obj ...any) error {
 
 	_, err = dg.CreateSchema(client, obj...)
 	return err
+}
+
+// AlterSchema applies a raw DQL schema string directly via Dgraph Alter,
+// bypassing dgman's additive CreateSchema path.
+func (c client) AlterSchema(ctx context.Context, schema string) error {
+	client, err := c.pool.get()
+	if err != nil {
+		c.logger.Error(err, "Failed to get client from pool")
+		return err
+	}
+	defer c.pool.put(client)
+
+	return client.Alter(ctx, &api.Operation{Schema: schema})
 }
 
 // GetSchema implements retrieving the Dgraph schema.
