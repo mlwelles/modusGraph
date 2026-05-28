@@ -437,6 +437,15 @@ func (c *StudioClient) Query(ctx context.Context) *StudioQuery {
 	return &StudioQuery{typed: c.typed.Query(ctx)}
 }
 
+// FulltextFields returns the DQL predicate names of Studio fields tagged
+// with a "fulltext" index, in struct declaration order. Consumers iterate
+// this list to build cross-field fulltext queries (e.g. typed.MultiQuery
+// search) without hardcoding the field set; adding or removing a fulltext
+// tag in the schema flows through on next `make generate`.
+func (c *StudioClient) FulltextFields() []string {
+	return []string{}
+}
+
 // StudioQuery is the wrapper-side fluent query builder for Studio. Builder
 // methods return *StudioQuery for chaining; terminal methods (Nodes, First,
 // IterNodes) execute the query and wrap results.
@@ -494,11 +503,39 @@ func (q *StudioQuery) WhereFounder(filter string, params ...any) *StudioQuery {
 	return q
 }
 
+// WhereFounderBy keeps only Studio records that have a founder
+// edge whose target node matches the filter composed inside build — a typed
+// DirectorQuery on which By<Field>/Or calls accumulate (ANDing, with Or
+// for alternatives). It is the type-safe form of WhereFounder: no
+// hand-written DQL or $N placeholders.
+func (q *StudioQuery) WhereFounderBy(build func(*DirectorQuery)) *StudioQuery {
+	sub := &DirectorQuery{typed: typed.NewDetachedQuery[schema.Director]()}
+	build(sub)
+	if expr, params := sub.typed.CombinedFilter(); expr != "" {
+		q.typed.WhereEdge("founder", expr, params...)
+	}
+	return q
+}
+
 // WhereHeadquarters keeps only Studio records that have a headquarters
 // edge whose target node matches the dgraph @filter expression. params bind to
 // $N placeholders. Multiple Where* calls are combined with AND.
 func (q *StudioQuery) WhereHeadquarters(filter string, params ...any) *StudioQuery {
 	q.typed.WhereEdge("headquarters", filter, params...)
+	return q
+}
+
+// WhereHeadquartersBy keeps only Studio records that have a headquarters
+// edge whose target node matches the filter composed inside build — a typed
+// CountryQuery on which By<Field>/Or calls accumulate (ANDing, with Or
+// for alternatives). It is the type-safe form of WhereHeadquarters: no
+// hand-written DQL or $N placeholders.
+func (q *StudioQuery) WhereHeadquartersBy(build func(*CountryQuery)) *StudioQuery {
+	sub := &CountryQuery{typed: typed.NewDetachedQuery[schema.Country]()}
+	build(sub)
+	if expr, params := sub.typed.CombinedFilter(); expr != "" {
+		q.typed.WhereEdge("headquarters", expr, params...)
+	}
 	return q
 }
 
@@ -510,11 +547,39 @@ func (q *StudioQuery) WhereCurrentHead(filter string, params ...any) *StudioQuer
 	return q
 }
 
+// WhereCurrentHeadBy keeps only Studio records that have a currentHead
+// edge whose target node matches the filter composed inside build — a typed
+// DirectorQuery on which By<Field>/Or calls accumulate (ANDing, with Or
+// for alternatives). It is the type-safe form of WhereCurrentHead: no
+// hand-written DQL or $N placeholders.
+func (q *StudioQuery) WhereCurrentHeadBy(build func(*DirectorQuery)) *StudioQuery {
+	sub := &DirectorQuery{typed: typed.NewDetachedQuery[schema.Director]()}
+	build(sub)
+	if expr, params := sub.typed.CombinedFilter(); expr != "" {
+		q.typed.WhereEdge("currentHead", expr, params...)
+	}
+	return q
+}
+
 // WhereCeo keeps only Studio records that have a ceo
 // edge whose target node matches the dgraph @filter expression. params bind to
 // $N placeholders. Multiple Where* calls are combined with AND.
 func (q *StudioQuery) WhereCeo(filter string, params ...any) *StudioQuery {
 	q.typed.WhereEdge("ceo", filter, params...)
+	return q
+}
+
+// WhereCeoBy keeps only Studio records that have a ceo
+// edge whose target node matches the filter composed inside build — a typed
+// DirectorQuery on which By<Field>/Or calls accumulate (ANDing, with Or
+// for alternatives). It is the type-safe form of WhereCeo: no
+// hand-written DQL or $N placeholders.
+func (q *StudioQuery) WhereCeoBy(build func(*DirectorQuery)) *StudioQuery {
+	sub := &DirectorQuery{typed: typed.NewDetachedQuery[schema.Director]()}
+	build(sub)
+	if expr, params := sub.typed.CombinedFilter(); expr != "" {
+		q.typed.WhereEdge("ceo", expr, params...)
+	}
 	return q
 }
 
@@ -526,11 +591,39 @@ func (q *StudioQuery) WhereHomeBase(filter string, params ...any) *StudioQuery {
 	return q
 }
 
+// WhereHomeBaseBy keeps only Studio records that have a homeBase
+// edge whose target node matches the filter composed inside build — a typed
+// CountryQuery on which By<Field>/Or calls accumulate (ANDing, with Or
+// for alternatives). It is the type-safe form of WhereHomeBase: no
+// hand-written DQL or $N placeholders.
+func (q *StudioQuery) WhereHomeBaseBy(build func(*CountryQuery)) *StudioQuery {
+	sub := &CountryQuery{typed: typed.NewDetachedQuery[schema.Country]()}
+	build(sub)
+	if expr, params := sub.typed.CombinedFilter(); expr != "" {
+		q.typed.WhereEdge("homeBase", expr, params...)
+	}
+	return q
+}
+
 // WhereParentCompany keeps only Studio records that have a parentCompany
 // edge whose target node matches the dgraph @filter expression. params bind to
 // $N placeholders. Multiple Where* calls are combined with AND.
 func (q *StudioQuery) WhereParentCompany(filter string, params ...any) *StudioQuery {
 	q.typed.WhereEdge("parentCompany", filter, params...)
+	return q
+}
+
+// WhereParentCompanyBy keeps only Studio records that have a parentCompany
+// edge whose target node matches the filter composed inside build — a typed
+// CountryQuery on which By<Field>/Or calls accumulate (ANDing, with Or
+// for alternatives). It is the type-safe form of WhereParentCompany: no
+// hand-written DQL or $N placeholders.
+func (q *StudioQuery) WhereParentCompanyBy(build func(*CountryQuery)) *StudioQuery {
+	sub := &CountryQuery{typed: typed.NewDetachedQuery[schema.Country]()}
+	build(sub)
+	if expr, params := sub.typed.CombinedFilter(); expr != "" {
+		q.typed.WhereEdge("parentCompany", expr, params...)
+	}
 	return q
 }
 
@@ -542,11 +635,39 @@ func (q *StudioQuery) WhereFilms(filter string, params ...any) *StudioQuery {
 	return q
 }
 
+// WhereFilmsBy keeps only Studio records that have a films
+// edge whose target node matches the filter composed inside build — a typed
+// FilmQuery on which By<Field>/Or calls accumulate (ANDing, with Or
+// for alternatives). It is the type-safe form of WhereFilms: no
+// hand-written DQL or $N placeholders.
+func (q *StudioQuery) WhereFilmsBy(build func(*FilmQuery)) *StudioQuery {
+	sub := &FilmQuery{typed: typed.NewDetachedQuery[schema.Film]()}
+	build(sub)
+	if expr, params := sub.typed.CombinedFilter(); expr != "" {
+		q.typed.WhereEdge("films", expr, params...)
+	}
+	return q
+}
+
 // WhereAdvisors keeps only Studio records that have a advisors
 // edge whose target node matches the dgraph @filter expression. params bind to
 // $N placeholders. Multiple Where* calls are combined with AND.
 func (q *StudioQuery) WhereAdvisors(filter string, params ...any) *StudioQuery {
 	q.typed.WhereEdge("advisors", filter, params...)
+	return q
+}
+
+// WhereAdvisorsBy keeps only Studio records that have a advisors
+// edge whose target node matches the filter composed inside build — a typed
+// DirectorQuery on which By<Field>/Or calls accumulate (ANDing, with Or
+// for alternatives). It is the type-safe form of WhereAdvisors: no
+// hand-written DQL or $N placeholders.
+func (q *StudioQuery) WhereAdvisorsBy(build func(*DirectorQuery)) *StudioQuery {
+	sub := &DirectorQuery{typed: typed.NewDetachedQuery[schema.Director]()}
+	build(sub)
+	if expr, params := sub.typed.CombinedFilter(); expr != "" {
+		q.typed.WhereEdge("advisors", expr, params...)
+	}
 	return q
 }
 
@@ -559,6 +680,22 @@ func (q *StudioQuery) ByName(filters ...filter.String) *StudioQuery {
 	if expr, params := b.Build(); expr != "" {
 		q.typed.Filter(expr, params...)
 	}
+	return q
+}
+
+// Or keeps only Studio records matching at least one of builders. Each builder
+// receives a fresh StudioQuery whose By<Field>/Filter calls accumulate (ANDing
+// within the builder); the builders' filters are ORed together and the whole
+// group ANDs with the rest of the query. Builders that add no filter are
+// skipped; an empty Or is a no-op.
+func (q *StudioQuery) Or(builders ...func(*StudioQuery)) *StudioQuery {
+	subs := make([]*typed.Query[schema.Studio], 0, len(builders))
+	for _, build := range builders {
+		sub := &StudioQuery{typed: typed.NewDetachedQuery[schema.Studio]()}
+		build(sub)
+		subs = append(subs, sub.typed)
+	}
+	q.typed.OrGroup(subs...)
 	return q
 }
 

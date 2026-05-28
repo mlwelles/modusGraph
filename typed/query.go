@@ -27,20 +27,21 @@ import (
 // variable and branch it into independent queries: every branch shares — and
 // keeps mutating — the same underlying query.
 //
-// Repeated builder calls do not all behave the same way. Filter, Limit,
-// Offset, After, Cascade, Name, RootFunc, and Vars overwrite: the last call
-// wins. OrderAsc, OrderDesc, and WhereEdge accumulate: each call adds to the
-// query.
+// Repeated builder calls do not all behave the same way. Limit, Offset, After,
+// Cascade, Name, RootFunc, and Vars overwrite: the last call wins. Filter,
+// OrderAsc, OrderDesc, and WhereEdge accumulate: each call adds to the query.
+// Accumulated Filter fragments AND together (see CombinedFilter, OrGroup).
 //
 // Limit and Offset additionally record the bounds that IterNodes pages
 // within — a Limit caps the rows it streams, an Offset is its start.
 type Query[T any] struct {
-	q      *dg.Query
-	conn   modusgraph.Client // runs the WhereEdge pre-pass; set by Client.Query
-	ctx    context.Context   // carried for the WhereEdge pre-pass query
-	limit  int               // caller-set row cap; 0 = unbounded
-	offset int               // caller-set starting offset; 0 = none
-	edges  []edgeFilter      // accumulated WhereEdge constraints; empty = none
+	q       *dg.Query
+	conn    modusgraph.Client // runs the WhereEdge pre-pass; set by Client.Query
+	ctx     context.Context   // carried for the WhereEdge pre-pass query
+	limit   int               // caller-set row cap; 0 = unbounded
+	offset  int               // caller-set starting offset; 0 = none
+	edges   []edgeFilter      // accumulated WhereEdge constraints; empty = none
+	filters []filterFrag      // accumulated @filter fragments, ANDed; empty = none
 }
 
 // edgeFilter is one accumulated WhereEdge constraint: a dgraph @filter
@@ -51,9 +52,94 @@ type edgeFilter struct {
 	params    []any
 }
 
+// filterFrag is one accumulated @filter fragment. Fragments join with AND.
+type filterFrag struct {
+	expr   string
+	params []any
+}
+
+// NewDetachedQuery returns a Query[T] with no connection, used only to
+// accumulate a filter expression: its By<Field>/Filter calls record fragments
+// that CombinedFilter reads back. It must not be executed (it has no terminal
+// path) and exists as the capture target behind the generated Or and
+// Where<Edge>By combinators.
+func NewDetachedQuery[T any]() *Query[T] {
+	return &Query[T]{}
+}
+
 // Filter adds a dgraph @filter expression. params bind to placeholders.
+// Repeated calls accumulate: every fragment ANDs together.
 func (qb *Query[T]) Filter(filter string, params ...any) *Query[T] {
-	qb.q.Filter(filter, params...)
+	qb.addFilter(filter, params)
+	return qb
+}
+
+// addFilter accumulates one @filter fragment. Fragments AND together: the
+// effective filter is every fragment joined with AND, each fragment's $N
+// placeholders shifted to stay bound to its own params. dgman's own Filter is
+// last-write-wins, so the full combined expression is re-pushed on every call.
+// A detached query (nil q — used to capture a sub-scope's filter for OrGroup or
+// Where<Edge>By) accumulates with no dgman query to push to; CombinedFilter
+// reads the fragments back.
+func (qb *Query[T]) addFilter(expr string, params []any) {
+	if expr == "" {
+		return
+	}
+	qb.filters = append(qb.filters, filterFrag{expr: expr, params: params})
+	if qb.q != nil {
+		combined, cp := combineAnd(qb.filters)
+		qb.q.Filter(combined, cp...)
+	}
+}
+
+// combineAnd joins fragments with AND, renumbering each fragment's ordinal
+// placeholders against the concatenated params slice.
+func combineAnd(frags []filterFrag) (string, []any) {
+	parts := make([]string, 0, len(frags))
+	var params []any
+	for _, f := range frags {
+		if f.expr == "" {
+			continue
+		}
+		parts = append(parts, shiftPlaceholders(f.expr, len(params)))
+		params = append(params, f.params...)
+	}
+	if len(parts) == 0 {
+		return "", nil
+	}
+	return strings.Join(parts, " AND "), params
+}
+
+// CombinedFilter returns the AND-combined accumulated @filter expression and
+// its params, or ("", nil) when no filter was set. It is the substrate behind
+// the generated Or and Where<Edge>By combinators: they run a sub-scope's
+// By<Field>/Filter calls against a detached query, then fold the captured
+// expression into a parent OR group or edge constraint.
+func (qb *Query[T]) CombinedFilter() (string, []any) {
+	return combineAnd(qb.filters)
+}
+
+// OrGroup adds one @filter group that ORs the combined filter of each sub.
+// Each sub is a detached Query[T] whose By<Field>/Filter calls have been
+// accumulated; their combined (AND) expressions are parenthesized, joined with
+// OR, and the whole OR group ANDs with the receiver's other filters. Subs with
+// an empty filter are skipped; an all-empty OrGroup is a no-op. It is the
+// substrate behind the generated <Entity>Query.Or combinator.
+func (qb *Query[T]) OrGroup(subs ...*Query[T]) *Query[T] {
+	parts := make([]string, 0, len(subs))
+	var params []any
+	for _, s := range subs {
+		e, p := s.CombinedFilter()
+		if e == "" {
+			continue
+		}
+		parts = append(parts, "("+shiftPlaceholders(e, len(params))+")")
+		params = append(params, p...)
+	}
+	if len(parts) == 0 {
+		return qb
+	}
+	qb.addFilter("("+strings.Join(parts, " OR ")+")", params)
 	return qb
 }
 
@@ -141,16 +227,17 @@ func (qb *Query[T]) WhereEdge(predicate, filter string, params ...any) *Query[T]
 	return qb
 }
 
-// WhereAnyOfText adds an @filter(anyoftext(predicate, $1)) clause.
-// Equivalent to: q.Filter("anyoftext(predicate, $1)", term).
+// WhereAnyOfText adds an @filter(anyoftext(predicate, $1)) clause. It
+// accumulates and ANDs with other filters like Filter.
 func (qb *Query[T]) WhereAnyOfText(predicate, term string) *Query[T] {
-	qb.q.Filter(fmt.Sprintf("anyoftext(%s, $1)", predicate), term)
+	qb.addFilter(fmt.Sprintf("anyoftext(%s, $1)", predicate), []any{term})
 	return qb
 }
 
-// WhereAllOfText adds an @filter(alloftext(predicate, $1)) clause.
+// WhereAllOfText adds an @filter(alloftext(predicate, $1)) clause. It
+// accumulates and ANDs with other filters like Filter.
 func (qb *Query[T]) WhereAllOfText(predicate, term string) *Query[T] {
-	qb.q.Filter(fmt.Sprintf("alloftext(%s, $1)", predicate), term)
+	qb.addFilter(fmt.Sprintf("alloftext(%s, $1)", predicate), []any{term})
 	return qb
 }
 

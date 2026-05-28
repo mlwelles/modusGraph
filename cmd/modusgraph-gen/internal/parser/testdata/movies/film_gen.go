@@ -395,6 +395,17 @@ func (c *FilmClient) Query(ctx context.Context) *FilmQuery {
 	return &FilmQuery{typed: c.typed.Query(ctx)}
 }
 
+// FulltextFields returns the DQL predicate names of Film fields tagged
+// with a "fulltext" index, in struct declaration order. Consumers iterate
+// this list to build cross-field fulltext queries (e.g. typed.MultiQuery
+// search) without hardcoding the field set; adding or removing a fulltext
+// tag in the schema flows through on next `make generate`.
+func (c *FilmClient) FulltextFields() []string {
+	return []string{
+		"name",
+	}
+}
+
 // FilmQuery is the wrapper-side fluent query builder for Film. Builder
 // methods return *FilmQuery for chaining; terminal methods (Nodes, First,
 // IterNodes) execute the query and wrap results.
@@ -452,11 +463,39 @@ func (q *FilmQuery) WhereGenres(filter string, params ...any) *FilmQuery {
 	return q
 }
 
+// WhereGenresBy keeps only Film records that have a genre
+// edge whose target node matches the filter composed inside build — a typed
+// GenreQuery on which By<Field>/Or calls accumulate (ANDing, with Or
+// for alternatives). It is the type-safe form of WhereGenres: no
+// hand-written DQL or $N placeholders.
+func (q *FilmQuery) WhereGenresBy(build func(*GenreQuery)) *FilmQuery {
+	sub := &GenreQuery{typed: typed.NewDetachedQuery[schema.Genre]()}
+	build(sub)
+	if expr, params := sub.typed.CombinedFilter(); expr != "" {
+		q.typed.WhereEdge("genre", expr, params...)
+	}
+	return q
+}
+
 // WhereCountries keeps only Film records that have a country
 // edge whose target node matches the dgraph @filter expression. params bind to
 // $N placeholders. Multiple Where* calls are combined with AND.
 func (q *FilmQuery) WhereCountries(filter string, params ...any) *FilmQuery {
 	q.typed.WhereEdge("country", filter, params...)
+	return q
+}
+
+// WhereCountriesBy keeps only Film records that have a country
+// edge whose target node matches the filter composed inside build — a typed
+// CountryQuery on which By<Field>/Or calls accumulate (ANDing, with Or
+// for alternatives). It is the type-safe form of WhereCountries: no
+// hand-written DQL or $N placeholders.
+func (q *FilmQuery) WhereCountriesBy(build func(*CountryQuery)) *FilmQuery {
+	sub := &CountryQuery{typed: typed.NewDetachedQuery[schema.Country]()}
+	build(sub)
+	if expr, params := sub.typed.CombinedFilter(); expr != "" {
+		q.typed.WhereEdge("country", expr, params...)
+	}
 	return q
 }
 
@@ -468,11 +507,39 @@ func (q *FilmQuery) WhereRatings(filter string, params ...any) *FilmQuery {
 	return q
 }
 
+// WhereRatingsBy keeps only Film records that have a rating
+// edge whose target node matches the filter composed inside build — a typed
+// RatingQuery on which By<Field>/Or calls accumulate (ANDing, with Or
+// for alternatives). It is the type-safe form of WhereRatings: no
+// hand-written DQL or $N placeholders.
+func (q *FilmQuery) WhereRatingsBy(build func(*RatingQuery)) *FilmQuery {
+	sub := &RatingQuery{typed: typed.NewDetachedQuery[schema.Rating]()}
+	build(sub)
+	if expr, params := sub.typed.CombinedFilter(); expr != "" {
+		q.typed.WhereEdge("rating", expr, params...)
+	}
+	return q
+}
+
 // WhereContentRatings keeps only Film records that have a rated
 // edge whose target node matches the dgraph @filter expression. params bind to
 // $N placeholders. Multiple Where* calls are combined with AND.
 func (q *FilmQuery) WhereContentRatings(filter string, params ...any) *FilmQuery {
 	q.typed.WhereEdge("rated", filter, params...)
+	return q
+}
+
+// WhereContentRatingsBy keeps only Film records that have a rated
+// edge whose target node matches the filter composed inside build — a typed
+// ContentRatingQuery on which By<Field>/Or calls accumulate (ANDing, with Or
+// for alternatives). It is the type-safe form of WhereContentRatings: no
+// hand-written DQL or $N placeholders.
+func (q *FilmQuery) WhereContentRatingsBy(build func(*ContentRatingQuery)) *FilmQuery {
+	sub := &ContentRatingQuery{typed: typed.NewDetachedQuery[schema.ContentRating]()}
+	build(sub)
+	if expr, params := sub.typed.CombinedFilter(); expr != "" {
+		q.typed.WhereEdge("rated", expr, params...)
+	}
 	return q
 }
 
@@ -484,11 +551,39 @@ func (q *FilmQuery) WhereStarring(filter string, params ...any) *FilmQuery {
 	return q
 }
 
+// WhereStarringBy keeps only Film records that have a starring
+// edge whose target node matches the filter composed inside build — a typed
+// PerformanceQuery on which By<Field>/Or calls accumulate (ANDing, with Or
+// for alternatives). It is the type-safe form of WhereStarring: no
+// hand-written DQL or $N placeholders.
+func (q *FilmQuery) WhereStarringBy(build func(*PerformanceQuery)) *FilmQuery {
+	sub := &PerformanceQuery{typed: typed.NewDetachedQuery[schema.Performance]()}
+	build(sub)
+	if expr, params := sub.typed.CombinedFilter(); expr != "" {
+		q.typed.WhereEdge("starring", expr, params...)
+	}
+	return q
+}
+
 // WhereDirectors keeps only Film records that have a directors
 // edge whose target node matches the dgraph @filter expression. params bind to
 // $N placeholders. Multiple Where* calls are combined with AND.
 func (q *FilmQuery) WhereDirectors(filter string, params ...any) *FilmQuery {
 	q.typed.WhereEdge("directors", filter, params...)
+	return q
+}
+
+// WhereDirectorsBy keeps only Film records that have a directors
+// edge whose target node matches the filter composed inside build — a typed
+// DirectorQuery on which By<Field>/Or calls accumulate (ANDing, with Or
+// for alternatives). It is the type-safe form of WhereDirectors: no
+// hand-written DQL or $N placeholders.
+func (q *FilmQuery) WhereDirectorsBy(build func(*DirectorQuery)) *FilmQuery {
+	sub := &DirectorQuery{typed: typed.NewDetachedQuery[schema.Director]()}
+	build(sub)
+	if expr, params := sub.typed.CombinedFilter(); expr != "" {
+		q.typed.WhereEdge("directors", expr, params...)
+	}
 	return q
 }
 
@@ -501,6 +596,22 @@ func (q *FilmQuery) ByName(filters ...filter.String) *FilmQuery {
 	if expr, params := b.Build(); expr != "" {
 		q.typed.Filter(expr, params...)
 	}
+	return q
+}
+
+// Or keeps only Film records matching at least one of builders. Each builder
+// receives a fresh FilmQuery whose By<Field>/Filter calls accumulate (ANDing
+// within the builder); the builders' filters are ORed together and the whole
+// group ANDs with the rest of the query. Builders that add no filter are
+// skipped; an empty Or is a no-op.
+func (q *FilmQuery) Or(builders ...func(*FilmQuery)) *FilmQuery {
+	subs := make([]*typed.Query[schema.Film], 0, len(builders))
+	for _, build := range builders {
+		sub := &FilmQuery{typed: typed.NewDetachedQuery[schema.Film]()}
+		build(sub)
+		subs = append(subs, sub.typed)
+	}
+	q.typed.OrGroup(subs...)
 	return q
 }
 

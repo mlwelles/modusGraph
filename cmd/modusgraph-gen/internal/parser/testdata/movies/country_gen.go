@@ -152,6 +152,17 @@ func (c *CountryClient) Query(ctx context.Context) *CountryQuery {
 	return &CountryQuery{typed: c.typed.Query(ctx)}
 }
 
+// FulltextFields returns the DQL predicate names of Country fields tagged
+// with a "fulltext" index, in struct declaration order. Consumers iterate
+// this list to build cross-field fulltext queries (e.g. typed.MultiQuery
+// search) without hardcoding the field set; adding or removing a fulltext
+// tag in the schema flows through on next `make generate`.
+func (c *CountryClient) FulltextFields() []string {
+	return []string{
+		"name",
+	}
+}
+
 // CountryQuery is the wrapper-side fluent query builder for Country. Builder
 // methods return *CountryQuery for chaining; terminal methods (Nodes, First,
 // IterNodes) execute the query and wrap results.
@@ -209,6 +220,20 @@ func (q *CountryQuery) WhereFilms(filter string, params ...any) *CountryQuery {
 	return q
 }
 
+// WhereFilmsBy keeps only Country records that have a ~country
+// edge whose target node matches the filter composed inside build — a typed
+// FilmQuery on which By<Field>/Or calls accumulate (ANDing, with Or
+// for alternatives). It is the type-safe form of WhereFilms: no
+// hand-written DQL or $N placeholders.
+func (q *CountryQuery) WhereFilmsBy(build func(*FilmQuery)) *CountryQuery {
+	sub := &FilmQuery{typed: typed.NewDetachedQuery[schema.Film]()}
+	build(sub)
+	if expr, params := sub.typed.CombinedFilter(); expr != "" {
+		q.typed.WhereEdge("~country", expr, params...)
+	}
+	return q
+}
+
 // ByName keeps only Country records whose name matches one
 // of filters. Terms within filters join with OR. Negated filters (Negated:true) become
 // NOT eq(...). An empty filters slice is a no-op.
@@ -218,6 +243,22 @@ func (q *CountryQuery) ByName(filters ...filter.String) *CountryQuery {
 	if expr, params := b.Build(); expr != "" {
 		q.typed.Filter(expr, params...)
 	}
+	return q
+}
+
+// Or keeps only Country records matching at least one of builders. Each builder
+// receives a fresh CountryQuery whose By<Field>/Filter calls accumulate (ANDing
+// within the builder); the builders' filters are ORed together and the whole
+// group ANDs with the rest of the query. Builders that add no filter are
+// skipped; an empty Or is a no-op.
+func (q *CountryQuery) Or(builders ...func(*CountryQuery)) *CountryQuery {
+	subs := make([]*typed.Query[schema.Country], 0, len(builders))
+	for _, build := range builders {
+		sub := &CountryQuery{typed: typed.NewDetachedQuery[schema.Country]()}
+		build(sub)
+		subs = append(subs, sub.typed)
+	}
+	q.typed.OrGroup(subs...)
 	return q
 }
 

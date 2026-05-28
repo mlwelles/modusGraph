@@ -24,6 +24,7 @@ import (
 	modusgraph "github.com/matthewmcneely/modusgraph"
 	movies "github.com/matthewmcneely/modusgraph/cmd/modusgraph-gen/internal/parser/testdata/movies"
 	moviesSchema "github.com/matthewmcneely/modusgraph/cmd/modusgraph-gen/internal/parser/testdata/movies/schema"
+	"github.com/matthewmcneely/modusgraph/typed/filter"
 )
 
 // newConn builds a local file-backed modusgraph client for a test. Each call
@@ -347,5 +348,71 @@ func TestWrapperQuery_WhereEdgeFiltersByEdgeTarget(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Fatalf("WhereFilms(name=Solaris) returned %d directors, want none", len(got))
+	}
+}
+
+// TestWrapperQuery_WhereEdgeByComposesTypedFilter proves the generated
+// WhereFilmsBy routes a closure's typed By<Field> calls through the edge
+// pre-pass: it must match exactly what the hand-written WhereFilms(`eq(...)`)
+// form matches, with no DQL string at the call site.
+func TestWrapperQuery_WhereEdgeByComposesTypedFilter(t *testing.T) {
+	ctx := context.Background()
+	client := movies.NewClient(newConn(t))
+
+	films := map[string]*moviesSchema.Film{
+		"Inception": {Name: "Inception"},
+		"Dunkirk":   {Name: "Dunkirk"},
+		"Jaws":      {Name: "Jaws"},
+	}
+	for name, f := range films {
+		if err := client.Film.Add(ctx, movies.WrapFilm(f)); err != nil {
+			t.Fatalf("Film.Add(%q): %v", name, err)
+		}
+	}
+	directors := []*moviesSchema.Director{
+		{Name: "Christopher Nolan", Films: []*moviesSchema.Film{films["Inception"], films["Dunkirk"]}},
+		{Name: "Steven Spielberg", Films: []*moviesSchema.Film{films["Jaws"]}},
+	}
+	for _, d := range directors {
+		if err := client.Director.Add(ctx, movies.WrapDirector(d)); err != nil {
+			t.Fatalf("Director.Add(%q): %v", d.Name, err)
+		}
+	}
+
+	got, err := client.Director.Query(ctx).
+		WhereFilmsBy(func(f *movies.FilmQuery) {
+			f.ByName(filter.String{Value: "Inception"})
+		}).Nodes()
+	if err != nil {
+		t.Fatalf("WhereFilmsBy Nodes: %v", err)
+	}
+	if len(got) != 1 || got[0].Name() != "Christopher Nolan" {
+		t.Fatalf("WhereFilmsBy(name=Inception) returned %d directors, want exactly [Christopher Nolan]", len(got))
+	}
+}
+
+// TestWrapperQuery_Or proves the generated Or combinator ORs its builders:
+// each receives a fresh query, their filters are ORed, and the group ANDs with
+// the rest of the chain.
+func TestWrapperQuery_Or(t *testing.T) {
+	ctx := context.Background()
+	client := movies.NewClient(newConn(t))
+
+	for _, name := range []string{"Inception", "Dunkirk", "Jaws"} {
+		if err := client.Film.Add(ctx, movies.WrapFilm(&moviesSchema.Film{Name: name})); err != nil {
+			t.Fatalf("Film.Add(%q): %v", name, err)
+		}
+	}
+
+	// name == "Inception" OR name == "Jaws" → two of three films.
+	got, err := client.Film.Query(ctx).Or(
+		func(f *movies.FilmQuery) { f.ByName(filter.String{Value: "Inception"}) },
+		func(f *movies.FilmQuery) { f.ByName(filter.String{Value: "Jaws"}) },
+	).Nodes()
+	if err != nil {
+		t.Fatalf("Or Nodes: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("Or(Inception, Jaws) returned %d films, want 2", len(got))
 	}
 }
