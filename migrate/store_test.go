@@ -77,15 +77,20 @@ func TestRunIntegration_TypesMigrationProducesSchema(t *testing.T) {
 		Label string   `json:"gadgetLabel,omitempty" dgraph:"predicate=gadget_label index=exact"`
 	}
 
-	require.NoError(t, Run(ctx, c, []Migration{{
+	migrations := []Migration{{
 		ID:     20260101000000,
 		Name:   "add_gadget",
 		Schema: Schema{Types: []any{&gadget{}}},
-	}}))
+	}}
+	require.NoError(t, Run(ctx, c, migrations))
 
 	schema, err := c.GetSchema(ctx)
 	require.NoError(t, err)
 	assert.Contains(t, schema, "gadget_label")
+
+	// A Types migration must be idempotent: re-running must not trip the
+	// checksum guard (regression for non-deterministic Types checksums).
+	require.NoError(t, Run(ctx, c, migrations), "re-running a Types migration must not fail the checksum check")
 }
 
 func TestStoreIntegration_LockBlocksWhenHeld(t *testing.T) {
