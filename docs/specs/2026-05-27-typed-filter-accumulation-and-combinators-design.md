@@ -50,6 +50,19 @@ placeholders shifted against the concatenated params slice (reusing
 `Filter` is still last-write-wins, so the full combined expression is re-pushed
 on each call — `Raw()` continues to reflect the current filter.
 
+```go
+// Each call adds a fragment; the fragments AND together.
+client.Resource.Query(ctx).
+    ByName(filter.String{Value: "vehicle"}).   // (eq(resourceName, $1))
+    ByExtension(filter.String{Value: "glb"}).  // AND (eq(extension, $2))
+    Filter("ge(size, $1)", 1024).              // AND ge(size, $3)
+    Nodes()
+// effective @filter: (eq(resourceName, $1)) AND (eq(extension, $2)) AND ge(size, $3)
+```
+
+Before this change, dgman's last-write-wins `Filter` kept only the final
+fragment — the first two groups were silently dropped.
+
 ### Capture primitive
 
 Three small additions turn accumulation into composition:
@@ -59,6 +72,32 @@ Three small additions turn accumulation into composition:
 - `CombinedFilter() (string, []any)` — reads the AND-combined fragments back.
 - `OrGroup(subs ...*Query[T])` — reads each sub's `CombinedFilter`, parenthesizes
   and OR-joins them into one group, which ANDs with the receiver's other filters.
+
+Most callers reach this through the generated `Or` / `Where<Edge>By` (below) and
+never touch the primitives. Used directly, they compose an AND-of-OR by hand:
+
+```go
+qc := typed.NewClient[Resource](conn)
+qc.Query(ctx).
+    Filter("eq(archiveStatus, $1)", "active").
+    OrGroup(
+        typed.NewDetachedQuery[Resource]().Filter("eq(extension, $1)", "glb"),
+        typed.NewDetachedQuery[Resource]().Filter("eq(extension, $1)", "obj"),
+    ).
+    Nodes()
+// effective @filter: eq(archiveStatus, $1) AND ((eq(extension, $2)) OR (eq(extension, $3)))
+```
+
+`CombinedFilter` reads a detached query's accumulation back without executing it:
+
+```go
+sub := typed.NewDetachedQuery[Resource]()
+sub.Filter("eq(resourceName, $1)", "vehicle")
+sub.Filter("ge(size, $1)", 1024)
+expr, params := sub.CombinedFilter()
+// expr   → "eq(resourceName, $1) AND ge(size, $2)"
+// params → ["vehicle", 1024]
+```
 
 ### Generated combinators
 
