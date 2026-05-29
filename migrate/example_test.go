@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 
 	mg "github.com/matthewmcneely/modusgraph"
 	"github.com/matthewmcneely/modusgraph/migrate"
@@ -27,6 +28,25 @@ func Example_additive() {
 	}
 	fmt.Println(m.Name, len(m.Steps))
 	// Output: create_tree 1
+}
+
+// Example_frozenSchema shows the immutable counterpart to Ensure. MarshalSchema
+// renders the live structs to a Dgraph schema string once; storing that string
+// in EnsureSchema freezes it, so the migration stays reproducible even after the
+// Tree struct evolves. Capture the string at authoring time (e.g. paste the
+// MarshalSchema output into a const or an embedded file) rather than calling
+// MarshalSchema from the migration, which would re-derive it from live structs.
+func Example_frozenSchema() {
+	frozen := migrate.MarshalSchema(&Tree{})
+	m := migrate.Migration{
+		ID:   20260104000000,
+		Name: "baseline",
+		Steps: []migrate.Step{
+			{Name: "baseline_schema", Schema: migrate.SchemaChange{EnsureSchema: frozen}},
+		},
+	}
+	fmt.Println(strings.Contains(frozen, "height:"), len(m.Steps))
+	// Output: true 1
 }
 
 // Example_backfill shows a hybrid migration: a schema step followed by a data

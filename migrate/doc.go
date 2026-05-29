@@ -5,10 +5,23 @@
 //
 // A Migration is an ordered list of named Steps, identified by a UTC timestamp
 // ID (YYYYMMDDHHMMSS). Each Step carries an optional SchemaChange (Ensure for
-// additive struct-derived schema, or Alter for raw DQL: rename/drop/retype) and
-// an optional Up data transform. On up, the runner applies a step's schema, runs
-// its Up, then records a checkpoint; on a later run it skips already-recorded
-// steps and resumes at the next one.
+// additive struct-derived schema, EnsureSchema for a frozen additive schema
+// string, or Alter for raw DQL: rename/drop/retype) and an optional Up data
+// transform. On up, the runner applies a step's schema, runs its Up, then
+// records a checkpoint; on a later run it skips already-recorded steps and
+// resumes at the next one.
+//
+// # Freezing schema
+//
+// Ensure derives its schema and checksum from the live struct definitions every
+// time the binary runs. That is convenient for bootstrapping but unsafe for a
+// migration that must survive its structs evolving: once the structs change, an
+// applied Ensure step's checksum drifts (ErrChecksumMismatch) and a fresh-DB
+// replay no longer matches the schema as of authoring time. For anything that
+// ships — a baseline especially — capture the schema once with MarshalSchema and
+// store the returned string in EnsureSchema. The frozen string is applied and
+// checksummed verbatim, so it is reproducible and immutable for the life of the
+// database.
 //
 // # The one rule that matters
 //
