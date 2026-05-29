@@ -103,6 +103,39 @@ func TestRun_FailsOnInFlightStepChecksumMismatch(t *testing.T) {
 	assert.Empty(t, calls, "nothing runs when a recorded step's checksum drifted")
 }
 
+func TestRun_FailsWhenRecordedStepRemoved(t *testing.T) {
+	s := newFakeStore()
+	c := &stubClient{}
+	var calls []string
+	m := makeMigration(20260101000000, "first", []string{"a"}, &calls)
+	// A step at index 1 was recorded, but the migration now has only one step:
+	// a shipped step was deleted.
+	s.seedStep(m.ID, "b", 1, "anychecksum")
+
+	err := run(ctx, c, s, []Migration{m})
+	var removed *ErrStepRemoved
+	require.ErrorAs(t, err, &removed, "deleting a shipped step is caught on resume")
+	assert.Equal(t, m.ID, removed.MigrationID)
+	assert.Equal(t, 1, removed.Index)
+	assert.Equal(t, "b", removed.Name)
+	assert.Empty(t, calls, "nothing runs when a recorded step was removed")
+}
+
+func TestRun_FailsWhenRecordedStepRenamed(t *testing.T) {
+	s := newFakeStore()
+	c := &stubClient{}
+	var calls []string
+	m := makeMigration(20260101000000, "first", []string{"a", "b"}, &calls)
+	// A step recorded at index 0 under a different name than the registered step
+	// at that ordinal: the step was renamed in place.
+	s.seedStep(m.ID, "renamed", 0, stepChecksum(0, m.Steps[0]))
+
+	err := run(ctx, c, s, []Migration{m})
+	var mm *ErrChecksumMismatch
+	require.ErrorAs(t, err, &mm, "renaming a step at a fixed ordinal is caught on resume")
+	assert.Empty(t, calls, "nothing runs when a recorded step's name drifted")
+}
+
 func TestRun_FailsOnMissingApplied(t *testing.T) {
 	s := newFakeStore()
 	c := &stubClient{}

@@ -73,14 +73,18 @@ func Run(ctx context.Context, c mg.Client, migrations []Migration) error {
 	return run(ctx, c, newDgraphStore(c), migrations)
 }
 
-func run(ctx context.Context, c mg.Client, s store, migrations []Migration) error {
+func run(ctx context.Context, c mg.Client, s store, migrations []Migration) (err error) {
 	if err := s.bootstrap(ctx); err != nil {
 		return fmt.Errorf("migrate: bootstrap: %w", err)
 	}
 	if err := s.acquireLock(ctx); err != nil {
 		return err
 	}
-	defer func() { _ = s.releaseLock(ctx) }()
+	defer func() {
+		if rerr := s.releaseLock(ctx); rerr != nil && err == nil {
+			err = fmt.Errorf("migrate: releasing lock: %w", rerr)
+		}
+	}()
 
 	applied, err := s.loadAppliedMigrations(ctx)
 	if err != nil {
@@ -129,7 +133,10 @@ func applyMigration(ctx context.Context, c mg.Client, s store, m Migration) erro
 	completed := make(map[int]struct{}, len(stepRecs))
 	for _, r := range stepRecs {
 		if r.Index >= len(m.Steps) {
-			return &ErrChecksumMismatch{ID: m.ID, Name: m.Name, Stored: r.Checksum, Computed: "<step removed>"}
+			return &ErrStepRemoved{MigrationID: m.ID, Name: r.Name, Index: r.Index}
+		}
+		if r.Name != m.Steps[r.Index].Name {
+			return &ErrChecksumMismatch{ID: m.ID, Name: m.Name, Stored: r.Checksum, Computed: stepChecksum(r.Index, m.Steps[r.Index])}
 		}
 		if computed := stepChecksum(r.Index, m.Steps[r.Index]); computed != r.Checksum {
 			return &ErrChecksumMismatch{ID: m.ID, Name: m.Name, Stored: r.Checksum, Computed: computed}
@@ -189,14 +196,18 @@ func Down(ctx context.Context, c mg.Client, migrations []Migration, toVersion in
 	return down(ctx, c, newDgraphStore(c), migrations, toVersion)
 }
 
-func down(ctx context.Context, c mg.Client, s store, migrations []Migration, toVersion int64) error {
+func down(ctx context.Context, c mg.Client, s store, migrations []Migration, toVersion int64) (err error) {
 	if err := s.bootstrap(ctx); err != nil {
 		return fmt.Errorf("migrate: bootstrap: %w", err)
 	}
 	if err := s.acquireLock(ctx); err != nil {
 		return err
 	}
-	defer func() { _ = s.releaseLock(ctx) }()
+	defer func() {
+		if rerr := s.releaseLock(ctx); rerr != nil && err == nil {
+			err = fmt.Errorf("migrate: releasing lock: %w", rerr)
+		}
+	}()
 
 	applied, err := s.loadAppliedMigrations(ctx)
 	if err != nil {
@@ -242,6 +253,9 @@ func down(ctx context.Context, c mg.Client, s store, migrations []Migration, toV
 }
 
 // Status returns applied, in-progress, and pending migration states.
+//
+// Status calls bootstrap (an idempotent schema ensure) on every invocation, so
+// it is not intended for high-frequency polling.
 func Status(ctx context.Context, c mg.Client, migrations []Migration) (StatusResult, error) {
 	return status(ctx, newDgraphStore(c), migrations)
 }
@@ -289,6 +303,9 @@ func status(ctx context.Context, s store, migrations []Migration) (StatusResult,
 }
 
 // Version returns the highest fully-applied migration ID, or 0 if none.
+//
+// Version calls bootstrap (an idempotent schema ensure) on every invocation, so
+// it is not intended for high-frequency polling.
 func Version(ctx context.Context, c mg.Client) (int64, error) {
 	return version(ctx, newDgraphStore(c))
 }

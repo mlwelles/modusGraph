@@ -66,14 +66,14 @@ func (f *fakeStore) saveMigration(_ context.Context, id int64, name, checksum st
 func (f *fakeStore) removeMigration(_ context.Context, id int64) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	migs := f.migs[:0]
+	var migs []migrationRec
 	for _, m := range f.migs {
 		if m.ID != id {
 			migs = append(migs, m)
 		}
 	}
 	f.migs = migs
-	steps := f.steps[:0]
+	var steps []stepRec
 	for _, s := range f.steps {
 		if s.MigrationID != id {
 			steps = append(steps, s)

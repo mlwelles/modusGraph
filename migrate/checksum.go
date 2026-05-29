@@ -29,6 +29,7 @@ func stepChecksum(index int, s Step) string {
 // so editing, adding, removing, or reordering steps changes it.
 func migrationChecksum(m Migration) string {
 	h := sha256.New()
+	fmt.Fprintf(h, "id:%d\n", m.ID)
 	for i, s := range m.Steps {
 		h.Write([]byte(stepChecksum(i, s)))
 	}

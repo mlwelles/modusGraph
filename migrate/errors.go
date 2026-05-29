@@ -35,6 +35,18 @@ func (e *ErrMissingApplied) Error() string {
 	return fmt.Sprintf("migrate: applied migration %d is missing from the registered list — never delete a shipped migration", e.ID)
 }
 
+// ErrStepRemoved is returned when a recorded step's ordinal no longer exists
+// in the registered migration (a shipped step was deleted).
+type ErrStepRemoved struct {
+	MigrationID int64
+	Name        string
+	Index       int
+}
+
+func (e *ErrStepRemoved) Error() string {
+	return fmt.Sprintf("migrate: migration %d step %d (%s) was recorded but no longer exists — never delete a shipped step", e.MigrationID, e.Index, e.Name)
+}
+
 // ErrIrreversible is returned when a requested down range includes a migration
 // with any step that has a nil Down.
 type ErrIrreversible struct {

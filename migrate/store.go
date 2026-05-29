@@ -39,7 +39,7 @@ type migrationRec struct {
 type stepRec struct {
 	MigrationID int64  `json:"stepMigrationId,omitempty"`
 	Name        string `json:"stepName,omitempty"`
-	Index       int    `json:"stepIndex,omitempty"`
+	Index       int    `json:"stepIndex"`
 	Checksum    string `json:"stepChecksum,omitempty"`
 }
 
@@ -60,7 +60,7 @@ type migrationStepRecord struct {
 	DType       []string  `json:"dgraph.type,omitempty" dgraph:"MigrationStepRecord"`
 	MigrationID int64     `json:"stepMigrationId,omitempty" dgraph:"predicate=migration_step_migration_id index=int"`
 	Name        string    `json:"stepName,omitempty" dgraph:"predicate=migration_step_name"`
-	Index       int       `json:"stepIndex,omitempty" dgraph:"predicate=migration_step_index"`
+	Index       int       `json:"stepIndex" dgraph:"predicate=migration_step_index"`
 	Checksum    string    `json:"stepChecksum,omitempty" dgraph:"predicate=migration_step_checksum"`
 	AppliedAt   time.Time `json:"stepAppliedAt,omitempty" dgraph:"predicate=migration_step_applied_at"`
 	DurationMs  int64     `json:"stepDurationMs,omitempty" dgraph:"predicate=migration_step_duration_ms"`
@@ -128,6 +128,9 @@ func (s *dgraphStore) loadStepRecords(ctx context.Context, migrationID int64) ([
 	return result.Steps, nil
 }
 
+// Insert (not Upsert) is safe: the Runner only calls this for a step/migration
+// that has no record yet — already-recorded steps and migrations are skipped on
+// (re-)run — so each is saved exactly once.
 func (s *dgraphStore) saveStep(ctx context.Context, migrationID int64, name string, index int, checksum string, durationMs int64) error {
 	return s.conn.Insert(ctx, &migrationStepRecord{
 		DType:       []string{"MigrationStepRecord"},
@@ -140,6 +143,9 @@ func (s *dgraphStore) saveStep(ctx context.Context, migrationID int64, name stri
 	})
 }
 
+// Insert (not Upsert) is safe: the Runner only calls this for a step/migration
+// that has no record yet — already-recorded steps and migrations are skipped on
+// (re-)run — so each is saved exactly once.
 func (s *dgraphStore) saveMigration(ctx context.Context, id int64, name, checksum string, durationMs int64) error {
 	return s.conn.Insert(ctx, &migrationRecord{
 		DType:      []string{"MigrationRecord"},
@@ -180,6 +186,11 @@ func (s *dgraphStore) removeMigration(ctx context.Context, id int64) error {
 	return s.conn.Delete(ctx, uids)
 }
 
+// NOTE: acquireLock is not atomic — it reads then writes in separate
+// transactions, so two concurrent runners can both observe no/stale lock and
+// proceed. A conditional-upsert/CAS helper on the Client is the planned fix
+// (see spec "modusGraph improvement candidates"). For now rely on single-runner
+// deploys (app scaled to zero).
 func (s *dgraphStore) acquireLock(ctx context.Context) error {
 	now := time.Now().UTC()
 	threshold := now.Add(-s.lockTTL)
