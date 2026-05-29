@@ -30,12 +30,12 @@ import (
 // CLI is the root command group. It can be parsed directly by Kong (the
 // generated standalone main does this) or embedded anonymously in a larger root
 // struct to mount these commands under another binary alongside its own (the
-// command fields and the --addr/--dir flags are promoted). After parsing, build
+// command fields and the --url/--dir flags are promoted). After parsing, build
 // a client with NewClient and pass it to kong's Run so the command bindings
 // resolve.
 type CLI struct {
-	Addr string `help:"Dgraph gRPC address." default:"dgraph://localhost:9080" env:"DGRAPH_ADDR"`
-	Dir  string `help:"Local database directory (embedded mode, mutually exclusive with --addr)." env:"DGRAPH_DIR"`
+	URL string `help:"Dgraph connection URL." default:"dgraph://localhost:9080" env:"DGRAPH_URL"`
+	Dir string `help:"Local database directory (embedded mode, mutually exclusive with --url)." env:"DGRAPH_DIR"`
 
 	Query QueryCmd `cmd:"" help:"Execute a raw DQL query."`
 {{- range .Entities}}
@@ -173,16 +173,16 @@ func printJSON(v any) error {
 	return enc.Encode(v)
 }
 
-// ConnectString resolves the Dgraph connection string from the --addr/--dir
+// ConnectString resolves the Dgraph connection string from the --url/--dir
 // flags, enforcing that they are mutually exclusive.
 func (c *CLI) ConnectString() (string, error) {
 	if c.Dir != "" {
-		if c.Addr != "dgraph://localhost:9080" {
-			return "", fmt.Errorf("--addr and --dir are mutually exclusive")
+		if c.URL != "dgraph://localhost:9080" {
+			return "", fmt.Errorf("--url and --dir are mutually exclusive")
 		}
 		return fmt.Sprintf("file://%s", filepath.Clean(c.Dir)), nil
 	}
-	return c.Addr, nil
+	return c.URL, nil
 }
 
 // NewClient opens a modusgraph client from the CLI's connection flags. Pass the
