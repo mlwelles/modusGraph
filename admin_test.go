@@ -201,3 +201,48 @@ func TestCreateSchema(t *testing.T) {
 		})
 	}
 }
+
+func TestAlterSchema(t *testing.T) {
+	testCases := []struct {
+		name string
+		uri  string
+		skip bool
+	}{
+		{
+			name: "AlterSchemaWithFileURI",
+			uri:  "file://" + GetTempDir(t),
+		},
+		{
+			name: "AlterSchemaWithDgraphURI",
+			uri:  "dgraph://" + os.Getenv("MODUSGRAPH_TEST_ADDR"),
+			skip: os.Getenv("MODUSGRAPH_TEST_ADDR") == "",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.skip {
+				t.Skipf("Skipping %s: MODUSGRAPH_TEST_ADDR not set", tc.name)
+				return
+			}
+
+			client, cleanup := CreateTestClient(t, tc.uri)
+			defer cleanup()
+
+			ctx := context.Background()
+
+			// Apply a raw DQL predicate definition that UpdateSchema cannot express.
+			err := client.AlterSchema(ctx, "alterpred: string @index(exact) .")
+			require.NoError(t, err, "AlterSchema should succeed")
+
+			// Verify the predicate is present by querying it directly.
+			// Note: the embedded engine's schema{} response omits predicate definitions
+			// (it only returns type blocks), so we use a predicate-specific schema query
+			// rather than GetSchema to verify end-to-end.
+			result, err := client.QueryRaw(ctx, "schema(pred: [alterpred]) {type}", nil)
+			require.NoError(t, err, "schema predicate query should succeed")
+			require.Contains(t, string(result), "alterpred",
+				"AlterSchema predicate should be visible in schema(pred: ...) query")
+		})
+	}
+}
