@@ -1,7 +1,3 @@
-// Package migrate provides versioned, run-once schema-and-data migrations for
-// modusGraph databases. A Migration is an ordered list of named Steps; each
-// Step is applied and checkpointed independently so a crashed run resumes at
-// the next un-applied step rather than restarting.
 package migrate
 
 import (
