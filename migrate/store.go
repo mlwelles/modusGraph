@@ -48,7 +48,7 @@ type stepRec struct {
 type migrationRecord struct {
 	UID        string    `json:"uid,omitempty"`
 	DType      []string  `json:"dgraph.type,omitempty" dgraph:"MigrationRecord"`
-	ID         int64     `json:"migrationId,omitempty" dgraph:"predicate=migration_id index=int upsert"`
+	ID         int64     `json:"migrationId,omitempty" dgraph:"predicate=migration_id index=int"`
 	Name       string    `json:"migrationName,omitempty" dgraph:"predicate=migration_name"`
 	AppliedAt  time.Time `json:"migrationAppliedAt,omitempty" dgraph:"predicate=migration_applied_at index=hour"`
 	Checksum   string    `json:"migrationChecksum,omitempty" dgraph:"predicate=migration_checksum"`
