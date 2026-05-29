@@ -3,6 +3,7 @@ package migrate_test
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	mg "github.com/matthewmcneely/modusgraph"
 	"github.com/matthewmcneely/modusgraph/migrate"
@@ -43,6 +44,29 @@ func Example_backfill() {
 	}
 	fmt.Println(len(m.Steps))
 	// Output: 2
+}
+
+// Example_retypePredicate shows how RetypePredicate expands into five staged,
+// checkpointed, idempotent steps. Provide a Convert func that maps each
+// existing string-rendered value to its new typed value. The op is irreversible:
+// every step's Down is nil.
+func Example_retypePredicate() {
+	spec := migrate.RetypeSpec{
+		Predicate: "height",
+		To:        migrate.Int,
+		Index:     "int",
+		// metersToMM converts a decimal-meters string to integer millimeters.
+		Convert: func(old string) (any, error) {
+			v, err := strconv.ParseFloat(old, 64)
+			if err != nil {
+				return nil, err
+			}
+			return int64(v * 1000), nil
+		},
+	}
+	steps := migrate.RetypePredicate(spec)
+	fmt.Println(len(steps))
+	// Output: 5
 }
 
 // Example_irreversibleDrop shows a destructive step. It omits Down, so any down
