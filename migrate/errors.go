@@ -83,6 +83,20 @@ func (e *ErrStepFailed) Error() string {
 
 func (e *ErrStepFailed) Unwrap() error { return e.Err }
 
+// ErrVerifyFailed is returned by a RetypePredicate verify step when the staged
+// value count does not match the source count. It is raised before any
+// destructive swap, leaving the source predicate untouched.
+type ErrVerifyFailed struct {
+	Predicate    string
+	SourceCount  int
+	StagingCount int
+}
+
+func (e *ErrVerifyFailed) Error() string {
+	return fmt.Sprintf("migrate: retype verify failed for %q: source has %d values, staging has %d — aborting before destructive swap",
+		e.Predicate, e.SourceCount, e.StagingCount)
+}
+
 func short(s string) string {
 	if len(s) >= 8 {
 		return s[:8]
