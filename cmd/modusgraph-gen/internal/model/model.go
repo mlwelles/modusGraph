@@ -12,6 +12,8 @@ type Package struct {
 	Entities         []Entity          // All detected entities (structs with UID + DType)
 	CLIName          string            // Name for CLI binary (kong.Name), defaults to Name if empty
 	WithValidator    bool              // Whether the generated CLI enables struct validation
+	CLIEmitMain      bool              // Whether the CLI file includes a func main() (standalone binary)
+	CLIPackage       string            // Package clause for the CLI file ("main" when CLIEmitMain, else a library package)
 }
 
 // Entity represents a single Dgraph type derived from a Go struct.

@@ -37,6 +37,8 @@ func main() {
 	noEntityClients := flag.Bool("no-entity-clients", false, "skip wrapper-level clients/queries only")
 	noCLI := flag.Bool("no-cli", false, "skip CLI generation")
 	withValidator := flag.Bool("with-validator", false, "enable validation in the generated CLI")
+	cliMain := flag.Bool("cli-main", true, "emit a func main() + package main (standalone binary); set false to emit an importable, mountable library package instead")
+	cliPackage := flag.String("cli-package", "", "package name for the CLI library when -cli-main=false (default: <cli-name>cli)")
 	flag.Parse()
 
 	// Apply the deprecated -out alias.
@@ -123,6 +125,8 @@ func main() {
 		NoCLI:                   *noCLI,
 		CLIName:                 *cliName,
 		WithValidator:           *withValidator,
+		CLINoMain:               !*cliMain,
+		CLIPackage:              *cliPackage,
 	}
 
 	if err := generator.Generate(pkg, cfg); err != nil {
