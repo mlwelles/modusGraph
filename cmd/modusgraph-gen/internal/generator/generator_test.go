@@ -1222,6 +1222,106 @@ type Studio struct {
 	}
 }
 
+// TestGenerate_CLILibraryMode checks that CLINoMain emits an importable library
+// package instead of a standalone main: the file is cli.go (not main.go), there
+// is no func main and no kong import, and the root command group plus its
+// connection helpers are exported so a consumer can embed and mount them. It
+// also checks the default library package name is derived as <cli-name>cli when
+// CLIPackage is empty.
+func TestGenerate_CLILibraryMode(t *testing.T) {
+	srcDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(srcDir, "go.mod"), []byte("module example.com/proj\n\ngo 1.25\n"), 0o644); err != nil {
+		t.Fatalf("go.mod: %v", err)
+	}
+	schemaDir := filepath.Join(srcDir, "movies", "schema")
+	if err := os.MkdirAll(schemaDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	src := `package schema
+
+type Studio struct {
+	UID   string   ` + "`json:\"uid,omitempty\"`" + `
+	DType []string ` + "`json:\"dgraph.type,omitempty\"`" + `
+	Name  string   ` + "`json:\"name\"`" + `
+}
+`
+	if err := os.WriteFile(filepath.Join(schemaDir, "studio.go"), []byte(src), 0o644); err != nil {
+		t.Fatalf("studio.go: %v", err)
+	}
+	pkg, err := parser.Parse(schemaDir)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	baseCfg := func(cliDir string) Config {
+		return Config{
+			SchemaDir:               schemaDir,
+			SchemaClientDir:         schemaDir,
+			EntityDir:               t.TempDir(),
+			CLIDir:                  cliDir,
+			EntityPackageName:       "movies",
+			EntityClientPackageName: "movies",
+			SchemaClientPackageName: "schema",
+			SchemaAlias:             "schema",
+			SchemaImportPath:        pkg.SchemaImportPath,
+			CLIName:                 "registry",
+			CLINoMain:               true,
+		}
+	}
+
+	// Explicit package name.
+	cliDir := filepath.Join(t.TempDir(), "registrycli")
+	if err := os.MkdirAll(cliDir, 0o755); err != nil {
+		t.Fatalf("mkdir cliDir: %v", err)
+	}
+	cfg := baseCfg(cliDir)
+	cfg.CLIPackage = "registrycli"
+	if err := Generate(pkg, cfg); err != nil {
+		t.Fatalf("generate (explicit package): %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(cliDir, "main.go")); !os.IsNotExist(err) {
+		t.Errorf("library mode must not emit main.go")
+	}
+	data, err := os.ReadFile(filepath.Join(cliDir, "cli.go"))
+	if err != nil {
+		t.Fatalf("reading generated library CLI: %v", err)
+	}
+	out := string(data)
+	checks := []struct {
+		substr  string
+		present bool
+	}{
+		{"package registrycli", true},
+		{"type CLI struct", true},
+		{"func (c *CLI) NewClient(", true},
+		{"func (c *CLI) ConnectString(", true},
+		{"func main(", false},
+		{`"github.com/alecthomas/kong"`, false},
+	}
+	for _, c := range checks {
+		if got := strings.Contains(out, c.substr); got != c.present {
+			t.Errorf("library CLI Contains(%q) = %v, want %v; output:\n%s", c.substr, got, c.present, out)
+		}
+	}
+
+	// Empty CLIPackage derives the default <cli-name>cli.
+	cliDir2 := filepath.Join(t.TempDir(), "lib")
+	if err := os.MkdirAll(cliDir2, 0o755); err != nil {
+		t.Fatalf("mkdir cliDir2: %v", err)
+	}
+	if err := Generate(pkg, baseCfg(cliDir2)); err != nil {
+		t.Fatalf("generate (default package): %v", err)
+	}
+	data2, err := os.ReadFile(filepath.Join(cliDir2, "cli.go"))
+	if err != nil {
+		t.Fatalf("reading generated library CLI (default package): %v", err)
+	}
+	if !strings.Contains(string(data2), "package registrycli") {
+		t.Errorf("default library package should be <cli-name>cli = registrycli; output:\n%s", string(data2))
+	}
+}
+
 // TestGenerate_WrapperQueryByField checks that <Entity>Query gains a
 // By<Field> method for each indexed scalar field whose Go type maps to a
 // known filter type (string, scalars.UUID), uses the matching filter import,

@@ -1,4 +1,4 @@
-package main
+package {{.CLIPackage}}
 {{- $pkg := .}}
 {{- $cliExtImports := packageExternalImports $pkg}}
 
@@ -13,7 +13,9 @@ import (
 	"strings"
 	"time"
 
+{{- if .CLIEmitMain}}
 	"github.com/alecthomas/kong"
+{{- end}}
 	"github.com/matthewmcneely/modusgraph"
 	"{{.SchemaImportPath}}"
 {{range $cliExtImports}}
@@ -25,8 +27,13 @@ import (
 {{- end}}
 )
 
-// CLI is the root command parsed by Kong.
-var CLI struct {
+// CLI is the root command group. It can be parsed directly by Kong (the
+// generated standalone main does this) or embedded anonymously in a larger root
+// struct to mount these commands under another binary alongside its own (the
+// command fields and the --addr/--dir flags are promoted). After parsing, build
+// a client with NewClient and pass it to kong's Run so the command bindings
+// resolve.
+type CLI struct {
 	Addr string `help:"Dgraph gRPC address." default:"dgraph://localhost:9080" env:"DGRAPH_ADDR"`
 	Dir  string `help:"Local database directory (embedded mode, mutually exclusive with --addr)." env:"DGRAPH_DIR"`
 
@@ -166,34 +173,42 @@ func printJSON(v any) error {
 	return enc.Encode(v)
 }
 
-func connectString() (string, error) {
-	if CLI.Dir != "" {
-		if CLI.Addr != "dgraph://localhost:9080" {
+// ConnectString resolves the Dgraph connection string from the --addr/--dir
+// flags, enforcing that they are mutually exclusive.
+func (c *CLI) ConnectString() (string, error) {
+	if c.Dir != "" {
+		if c.Addr != "dgraph://localhost:9080" {
 			return "", fmt.Errorf("--addr and --dir are mutually exclusive")
 		}
-		return fmt.Sprintf("file://%s", filepath.Clean(CLI.Dir)), nil
+		return fmt.Sprintf("file://%s", filepath.Clean(c.Dir)), nil
 	}
-	return CLI.Addr, nil
+	return c.Addr, nil
 }
 
-func main() {
-	ctx := kong.Parse(&CLI,
-		kong.Name("{{.CLIName}}"),
-		kong.Description("CLI for the {{.CLIName}} data model."),
-	)
-
-	connStr, err := connectString()
+// NewClient opens a modusgraph client from the CLI's connection flags. Pass the
+// returned client (and the schema client built from it) to kong's Run so the
+// generated command bindings resolve. The caller owns Close.
+func (c *CLI) NewClient() (modusgraph.Client, error) {
+	connStr, err := c.ConnectString()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%v\n", err)
-		os.Exit(1)
+		return nil, err
 	}
-
-	conn, err := modusgraph.NewClient(connStr,
+	return modusgraph.NewClient(connStr,
 		modusgraph.WithAutoSchema(true),
 {{- if .WithValidator}}
 		modusgraph.WithValidator(modusgraph.NewValidator()),
 {{- end}}
 	)
+}
+{{if .CLIEmitMain}}
+func main() {
+	var cli CLI
+	ctx := kong.Parse(&cli,
+		kong.Name("{{.CLIName}}"),
+		kong.Description("CLI for the {{.CLIName}} data model."),
+	)
+
+	conn, err := cli.NewClient()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "connect: %v\n", err)
 		os.Exit(1)
@@ -205,3 +220,4 @@ func main() {
 	err = ctx.Run(conn, client)
 	ctx.FatalIfErrorf(err)
 }
+{{- end}}

@@ -52,6 +52,8 @@ type Config struct {
 	// CLI tweaks.
 	CLIName       string // name for the kong CLI binary (defaults to EntityPackageName)
 	WithValidator bool   // wire in modusgraph.WithValidator in the generated CLI
+	CLINoMain     bool   // emit the CLI as an importable library package (no func main); zero value keeps the standalone-binary default
+	CLIPackage    string // package name for the CLI library when CLINoMain (default: <cli-name>cli)
 }
 
 // Generate renders all code-generation templates against pkg and writes the
@@ -68,6 +70,17 @@ func Generate(pkg *model.Package, cfg Config) error {
 
 	// Apply WithValidator from cfg.
 	pkg.WithValidator = cfg.WithValidator
+
+	// Resolve CLI emit mode. CLINoMain (zero value false) keeps the historical
+	// standalone-binary behavior; setting it emits an importable library package.
+	pkg.CLIEmitMain = !cfg.CLINoMain
+	if pkg.CLIEmitMain {
+		pkg.CLIPackage = "main"
+	} else if cfg.CLIPackage != "" {
+		pkg.CLIPackage = cfg.CLIPackage
+	} else {
+		pkg.CLIPackage = sanitizePackageName(pkg.CLIName) + "cli"
+	}
 
 	// Sort entities by name for deterministic output.
 	sort.Slice(pkg.Entities, func(i, j int) bool {
@@ -299,12 +312,16 @@ func Generate(pkg *model.Package, cfg Config) error {
 		}
 	}
 
-	// cli.go.tmpl → main.go (CLIDir, gated by NoCLI)
+	// cli.go.tmpl → main.go (standalone) or cli.go (library), gated by NoCLI.
 	if !cfg.NoCLI && cfg.CLIDir != "" {
 		if err := os.MkdirAll(cfg.CLIDir, 0o755); err != nil {
 			return fmt.Errorf("creating CLI directory: %w", err)
 		}
-		if err := executeAndWrite(tmpl, "cli.go.tmpl", pkg, filepath.Join(cfg.CLIDir, "main.go")); err != nil {
+		cliFile := "main.go"
+		if !pkg.CLIEmitMain {
+			cliFile = "cli.go"
+		}
+		if err := executeAndWrite(tmpl, "cli.go.tmpl", pkg, filepath.Join(cfg.CLIDir, cliFile)); err != nil {
 			return err
 		}
 	}
@@ -657,6 +674,27 @@ func packageExternalImports(pkg *model.Package) []ImportSpec {
 		allFields = append(allFields, marshalFields(entity.Fields)...)
 	}
 	return externalImports(allFields, pkg.Imports)
+}
+
+// sanitizePackageName reduces s to a valid lowercase Go package identifier by
+// lowercasing and dropping any character that is not a letter or digit (e.g.
+// "my-cli" → "mycli"). A leading digit is prefixed with "x" so the result is a
+// valid identifier. Used to derive the default CLI library package name.
+func sanitizePackageName(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(s) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+		}
+	}
+	out := b.String()
+	if out == "" {
+		return "cli"
+	}
+	if unicode.IsDigit(rune(out[0])) {
+		return "x" + out
+	}
+	return out
 }
 
 // lcFirst lowercases the first character of a string.
