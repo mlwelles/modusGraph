@@ -3,34 +3,46 @@ package migrate
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"sort"
 	"strings"
 
 	dg "github.com/dolan-in/dgman/v2"
 )
 
-// checksumSchema computes a stable SHA-256 hex string over the schema portion
-// of a Migration. Only the schema input is hashed — never the Up/Down closures.
-// For Schema.DQL the raw string is hashed; for Schema.Types a canonical
-// (sorted) rendering of the dgman schema is hashed. A zero-value Schema (no
-// schema change) hashes to a well-known constant.
-func checksumSchema(s Schema) string {
+// stepChecksum hashes a step's identity (name + ordinal) and its schema portion
+// only — never the Up/Down closures. Alter strings are hashed raw; Ensure types
+// are hashed via a canonical (sorted) rendering of the dgman schema.
+func stepChecksum(index int, s Step) string {
 	h := sha256.New()
+	fmt.Fprintf(h, "name:%s\nindex:%d\n", s.Name, index)
 	switch {
-	case s.DQL != "":
-		h.Write([]byte("dql:" + s.DQL))
-	case len(s.Types) > 0:
+	case s.Schema.Alter != "":
+		h.Write([]byte("alter:" + s.Schema.Alter))
+	case len(s.Schema.Ensure) > 0:
 		ts := dg.NewTypeSchema()
-		ts.Marshal("", s.Types...)
-		h.Write([]byte("types:" + canonicalTypeSchema(ts)))
+		ts.Marshal("", s.Schema.Ensure...)
+		h.Write([]byte("ensure:" + canonicalTypeSchema(ts)))
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// migrationChecksum hashes the ordered concatenation of each step's checksum,
+// so editing, adding, removing, or reordering steps changes it.
+func migrationChecksum(m Migration) string {
+	h := sha256.New()
+	fmt.Fprintf(h, "id:%d\n", m.ID)
+	for i, s := range m.Steps {
+		h.Write([]byte(stepChecksum(i, s)))
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }
 
 // canonicalTypeSchema renders a dgman TypeSchema deterministically. dgman's own
-// TypeSchema.String() ranges over Go maps (TypeMap, SchemaMap) in randomized
-// order, so its output cannot be hashed stably. This sorts predicates and types
-// (and each type's predicate set) into a fixed order.
+// TypeSchema.String() ranges over Go maps (Schema, Types) in randomized order,
+// so its output cannot be hashed stably — an Ensure step would otherwise report
+// false drift and fail the immutability guard on re-run. This sorts predicates
+// and types (and each type's predicate set) into a fixed order.
 func canonicalTypeSchema(ts *dg.TypeSchema) string {
 	var b strings.Builder
 
