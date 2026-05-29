@@ -11,14 +11,17 @@ import (
 )
 
 // stepChecksum hashes a step's identity (name + ordinal) and its schema portion
-// only — never the Up/Down closures. Alter strings are hashed raw; Ensure types
-// are hashed via a canonical (sorted) rendering of the dgman schema.
+// only — never the Up/Down closures. Alter and EnsureSchema strings are hashed
+// raw; Ensure types are hashed via a canonical (sorted) rendering of the dgman
+// schema. The switch order matches applySchemaChange.
 func stepChecksum(index int, s Step) string {
 	h := sha256.New()
 	fmt.Fprintf(h, "name:%s\nindex:%d\n", s.Name, index)
 	switch {
 	case s.Schema.Alter != "":
 		h.Write([]byte("alter:" + s.Schema.Alter))
+	case s.Schema.EnsureSchema != "":
+		h.Write([]byte("ensureSchema:" + s.Schema.EnsureSchema))
 	case len(s.Schema.Ensure) > 0:
 		ts := dg.NewTypeSchema()
 		ts.Marshal("", s.Schema.Ensure...)

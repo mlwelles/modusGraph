@@ -10,11 +10,27 @@ import (
 )
 
 // SchemaChange is the schema portion of a Step. Set exactly one field; the zero
-// value means the step makes no schema change.
+// value means the step makes no schema change. When more than one is set the
+// runner prefers Alter, then EnsureSchema, then Ensure.
 type SchemaChange struct {
 	// Ensure are struct templates whose derived schema is applied additively via
 	// client.UpdateSchema (idempotent: ensures the predicates/types exist).
+	//
+	// Ensure is NOT frozen: both the applied schema and the step's checksum are
+	// derived from the live struct definitions at the moment the migrate binary
+	// runs. If those structs evolve after the migration ships, an already-applied
+	// migration's checksum changes (ErrChecksumMismatch) and a fresh-database
+	// replay gets the structs' latest shape instead of their shape at authoring
+	// time. Use Ensure for throwaway/bootstrap schema; use EnsureSchema for any
+	// migration that must stay reproducible after it ships (e.g. a baseline).
 	Ensure []any
+	// EnsureSchema is a frozen Dgraph Schema Definition Language string applied
+	// additively via client.AlterSchema. It is the immutable counterpart to
+	// Ensure: render the current struct-derived schema once with MarshalSchema,
+	// store the returned string here, and it never drifts as the structs evolve.
+	// The step's checksum is the verbatim string, so the migration stays
+	// reproducible and immutable for the life of the database.
+	EnsureSchema string
 	// Alter is a raw Dgraph schema string applied via client.AlterSchema, for
 	// changes Ensure cannot express: rename, drop, retype.
 	Alter string
@@ -183,6 +199,8 @@ func applySchemaChange(ctx context.Context, c mg.Client, sc SchemaChange) error 
 	switch {
 	case sc.Alter != "":
 		return c.AlterSchema(ctx, sc.Alter)
+	case sc.EnsureSchema != "":
+		return c.AlterSchema(ctx, sc.EnsureSchema)
 	case len(sc.Ensure) > 0:
 		return c.UpdateSchema(ctx, sc.Ensure...)
 	}
