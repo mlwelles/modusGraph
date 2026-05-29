@@ -3,137 +3,108 @@ package migrate
 import (
 	"context"
 	"testing"
-	"time"
 
 	mg "github.com/matthewmcneely/modusgraph"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// newTestClient builds a file-backed embedded modusgraph client for integration
-// tests. No live Dgraph cluster is required.
-func newTestClient(t *testing.T) mg.Client {
+// newEmbeddedClient opens an embedded (file://) modusGraph client backed by a
+// fresh temp dir. Each test gets its own directory so the per-process singleton
+// Engine is fully torn down (client.Close then mg.Shutdown) before the next test
+// opens a new one. Do not call t.Parallel() in integration tests.
+func newEmbeddedClient(t *testing.T) mg.Client {
 	t.Helper()
-	c, err := mg.NewClient("file://"+t.TempDir(), mg.WithAutoSchema(false))
-	require.NoError(t, err)
+	// t.TempDir() creates the directory, so os.Stat inside NewClient succeeds.
+	dir := t.TempDir()
+	c, err := mg.NewClient("file://"+dir, mg.WithAutoSchema(true))
+	require.NoError(t, err, "open embedded modusgraph")
 	t.Cleanup(func() {
-		_ = c.DropAll(context.Background())
 		c.Close()
+		// Shutdown clears activeEngine and resets the singleton flag so the
+		// next test's NewEngine call succeeds. client.Close already resets the
+		// singleton via engine.Close, but Shutdown additionally nils activeEngine.
 		mg.Shutdown()
 	})
 	return c
 }
 
-func TestRunIntegration_AppliesAndRecords(t *testing.T) {
-	c := newTestClient(t)
-	ctx := context.Background()
+type tree struct {
+	UID    string   `json:"uid,omitempty"`
+	DType  []string `json:"dgraph.type,omitempty" dgraph:"Tree"`
+	Height int      `json:"height,omitempty" dgraph:"predicate=height index=int"`
+}
 
-	migrations := []Migration{
-		{
-			ID:     20260101000000,
-			Name:   "add_widget",
-			Schema: Schema{DQL: "widgetName: string @index(exact) ."},
-		},
-	}
+func TestIntegration_RunRecordsAndResumes(t *testing.T) {
+	c := newEmbeddedClient(t)
+	s := newDgraphStore(c)
+	var calls []string
+	m := makeMigration(20260101000000, "first", []string{"a", "b"}, &calls)
 
-	require.NoError(t, Run(ctx, c, migrations))
+	require.NoError(t, run(ctx, c, s, []Migration{m}))
 
-	v, err := Version(ctx, c)
+	migs, err := s.loadAppliedMigrations(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, int64(20260101000000), v)
+	require.Len(t, migs, 1)
+	assert.Equal(t, migrationChecksum(m), migs[0].Checksum, "stored checksum round-trips")
 
-	// Second run is idempotent.
-	require.NoError(t, Run(ctx, c, migrations))
-	v2, _ := Version(ctx, c)
-	assert.Equal(t, v, v2)
+	// Re-running is a no-op (idempotent at the migration level).
+	calls = nil
+	require.NoError(t, run(ctx, c, s, []Migration{m}))
+	assert.Empty(t, calls, "re-run applies nothing")
 }
 
-func TestRunIntegration_ChecksumMismatchFails(t *testing.T) {
-	c := newTestClient(t)
-	ctx := context.Background()
+func TestIntegration_HybridSchemaThenBackfill(t *testing.T) {
+	c := newEmbeddedClient(t)
+	s := newDgraphStore(c)
 
-	original := Migration{
-		ID:     20260101000000,
-		Name:   "add_widget",
-		Schema: Schema{DQL: "widgetName: string @index(exact) ."},
-	}
-	require.NoError(t, Run(ctx, c, []Migration{original}))
-
-	// Change the schema definition of an already-applied migration.
-	tampered := original
-	tampered.Schema.DQL = "widgetName: string @index(hash) ."
-	err := Run(ctx, c, []Migration{tampered})
-	var mismatch *ErrChecksumMismatch
-	require.ErrorAs(t, err, &mismatch)
-}
-
-func TestRunIntegration_TypesMigrationProducesSchema(t *testing.T) {
-	c := newTestClient(t)
-	ctx := context.Background()
-
-	type gadget struct {
-		UID   string   `json:"uid,omitempty"`
-		DType []string `json:"dgraph.type,omitempty" dgraph:"Gadget"`
-		Label string   `json:"gadgetLabel,omitempty" dgraph:"predicate=gadget_label index=exact"`
-	}
-
-	migrations := []Migration{{
-		ID:     20260101000000,
-		Name:   "add_gadget",
-		Schema: Schema{Types: []any{&gadget{}}},
+	// A migration that ensures the Tree schema, then backfills one node.
+	m := Migration{ID: 20260101000000, Name: "tree_baseline", Steps: []Step{
+		{Name: "ensure_tree", Schema: SchemaChange{Ensure: []any{&tree{}}}},
+		{Name: "seed_one", Up: func(ctx context.Context, cl mg.Client) error {
+			return cl.Insert(ctx, &tree{DType: []string{"Tree"}, Height: 5730})
+		}},
 	}}
-	require.NoError(t, Run(ctx, c, migrations))
 
-	schema, err := c.GetSchema(ctx)
+	require.NoError(t, run(ctx, c, s, []Migration{m}))
+
+	raw, err := c.QueryRaw(ctx, `{ q(func: type(Tree)) { height } }`, nil)
 	require.NoError(t, err)
-	assert.Contains(t, schema, "gadget_label")
-
-	// A Types migration must be idempotent: re-running must not trip the
-	// checksum guard (regression for non-deterministic Types checksums).
-	require.NoError(t, Run(ctx, c, migrations), "re-running a Types migration must not fail the checksum check")
+	assert.Contains(t, string(raw), `"height":5730`, "backfilled node present with int height")
 }
 
-func TestStoreIntegration_LockBlocksWhenHeld(t *testing.T) {
-	c := newTestClient(t)
-	ctx := context.Background()
+func TestIntegration_ResumeAfterSimulatedPartialApply(t *testing.T) {
+	c := newEmbeddedClient(t)
 	s := newDgraphStore(c)
 	require.NoError(t, s.bootstrap(ctx))
 
-	require.NoError(t, s.acquireLock(ctx), "first acquire should succeed")
-	require.ErrorIs(t, s.acquireLock(ctx), ErrLocked, "second acquire should be blocked")
+	var calls []string
+	m := makeMigration(20260101000000, "first", []string{"a", "b", "c"}, &calls)
+	// Simulate a crash that completed step 0 only: record it directly.
+	require.NoError(t, s.saveStep(ctx, m.ID, "a", 0, stepChecksum(0, m.Steps[0]), 1))
 
-	require.NoError(t, s.releaseLock(ctx))
-	require.NoError(t, s.acquireLock(ctx), "acquire after release should succeed")
+	require.NoError(t, run(ctx, c, s, []Migration{m}))
+	assert.Equal(t, []string{"20260101000000/b", "20260101000000/c"}, calls, "resumes at step b")
+
+	migs, _ := s.loadAppliedMigrations(ctx)
+	assert.Len(t, migs, 1)
 }
 
-func TestStoreIntegration_StaleLockStolen(t *testing.T) {
-	c := newTestClient(t)
-	ctx := context.Background()
+func TestIntegration_DownRoundTrip(t *testing.T) {
+	c := newEmbeddedClient(t)
 	s := newDgraphStore(c)
-	s.lockTTL = 10 * time.Millisecond
-	require.NoError(t, s.bootstrap(ctx))
+	var calls []string
+	m := makeMigration(20260101000000, "first", []string{"a", "b"}, &calls)
 
-	require.NoError(t, s.acquireLock(ctx))
-	time.Sleep(20 * time.Millisecond) // let the lock go stale
-	require.NoError(t, s.acquireLock(ctx), "stale lock should be stealable")
-}
+	require.NoError(t, run(ctx, c, s, []Migration{m}))
+	require.NoError(t, down(ctx, c, s, []Migration{m}, 0))
 
-func TestDownIntegration_RollsBackAndRemovesRecord(t *testing.T) {
-	c := newTestClient(t)
-	ctx := context.Background()
+	v, err := version(ctx, s)
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), v, "version back to 0 after full down")
 
-	m := Migration{
-		ID:     20260101000000,
-		Name:   "add_widget",
-		Schema: Schema{DQL: "widgetName2: string @index(exact) ."},
-		Down:   func(_ context.Context, _ mg.Client) error { return nil },
-	}
-
-	require.NoError(t, Run(ctx, c, []Migration{m}))
-	v, _ := Version(ctx, c)
-	require.Equal(t, m.ID, v)
-
-	require.NoError(t, Down(ctx, c, []Migration{m}, 0))
-	v2, _ := Version(ctx, c)
-	assert.Equal(t, int64(0), v2)
+	// up again succeeds (no leftover records block it).
+	calls = nil
+	require.NoError(t, run(ctx, c, s, []Migration{m}))
+	assert.Equal(t, []string{"20260101000000/a", "20260101000000/b"}, calls)
 }

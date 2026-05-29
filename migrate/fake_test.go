@@ -11,57 +11,82 @@ import (
 	"github.com/matthewmcneely/modusgraph/load"
 )
 
-// fakeStore is an in-memory store for unit testing the Runner.
+// fakeStore is an in-memory store for unit-testing the Runner.
 type fakeStore struct {
-	mu      sync.Mutex
-	records []appliedRecord
-	locked  bool
-	bootErr error
-	saveErr error
-	lockErr error
+	mu        sync.Mutex
+	migs      []migrationRec
+	steps     []stepRec
+	locked    bool
+	bootErr   error
+	lockErr   error
+	saveErr   error // injected error for saveStep
 }
 
 func newFakeStore() *fakeStore { return &fakeStore{} }
 
-func (f *fakeStore) bootstrap(_ context.Context) error { return f.bootErr }
+func (f *fakeStore) bootstrap(context.Context) error { return f.bootErr }
 
-func (f *fakeStore) loadApplied(_ context.Context) ([]appliedRecord, error) {
+func (f *fakeStore) loadAppliedMigrations(context.Context) ([]migrationRec, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	out := make([]appliedRecord, len(f.records))
-	copy(out, f.records)
+	out := append([]migrationRec(nil), f.migs...)
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
 }
 
-func (f *fakeStore) save(_ context.Context, id int64, name, checksum string, durationMs int64) error {
+func (f *fakeStore) loadStepRecords(_ context.Context, migrationID int64) ([]stepRec, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []stepRec
+	for _, s := range f.steps {
+		if s.MigrationID == migrationID {
+			out = append(out, s)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) saveStep(_ context.Context, migrationID int64, name string, index int, checksum string, _ int64) error {
 	if f.saveErr != nil {
 		return f.saveErr
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.records = append(f.records, appliedRecord{ID: id, Name: name, Checksum: checksum, DurationMs: durationMs})
-	sort.Slice(f.records, func(i, j int) bool { return f.records[i].ID < f.records[j].ID })
+	f.steps = append(f.steps, stepRec{MigrationID: migrationID, Name: name, Index: index, Checksum: checksum})
 	return nil
 }
 
-func (f *fakeStore) remove(_ context.Context, id int64) error {
+func (f *fakeStore) saveMigration(_ context.Context, id int64, name, checksum string, _ int64) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	for i, r := range f.records {
-		if r.ID == id {
-			f.records = append(f.records[:i], f.records[i+1:]...)
-			return nil
-		}
-	}
+	f.migs = append(f.migs, migrationRec{ID: id, Name: name, Checksum: checksum})
 	return nil
 }
 
-func (f *fakeStore) acquireLock(_ context.Context) error {
+func (f *fakeStore) removeMigration(_ context.Context, id int64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var migs []migrationRec
+	for _, m := range f.migs {
+		if m.ID != id {
+			migs = append(migs, m)
+		}
+	}
+	f.migs = migs
+	var steps []stepRec
+	for _, s := range f.steps {
+		if s.MigrationID != id {
+			steps = append(steps, s)
+		}
+	}
+	f.steps = steps
+	return nil
+}
+
+func (f *fakeStore) acquireLock(context.Context) error {
 	if f.lockErr != nil {
 		return f.lockErr
 	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	if f.locked {
 		return ErrLocked
 	}
@@ -69,46 +94,42 @@ func (f *fakeStore) acquireLock(_ context.Context) error {
 	return nil
 }
 
-func (f *fakeStore) releaseLock(_ context.Context) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.locked = false
-	return nil
+func (f *fakeStore) releaseLock(context.Context) error { f.locked = false; return nil }
+
+// seedStep records a step as already applied (test setup for resume/skip).
+func (f *fakeStore) seedStep(migrationID int64, name string, index int, checksum string) {
+	f.steps = append(f.steps, stepRec{MigrationID: migrationID, Name: name, Index: index, Checksum: checksum})
 }
 
-// stubClient implements mg.Client for unit tests. Schema calls are recorded;
-// everything else is a no-op.
+// seedMigration records a migration as fully applied (test setup).
+func (f *fakeStore) seedMigration(id int64, name, checksum string) {
+	f.migs = append(f.migs, migrationRec{ID: id, Name: name, Checksum: checksum})
+}
+
+// stubClient implements mg.Client. Schema calls are no-ops; the rest are inert.
 type stubClient struct {
 	schemaErr      error
 	alterSchemaErr error
-	appliedTypes   [][]any
-	alteredDQL     []string
 }
 
-func (s *stubClient) Insert(_ context.Context, _ any) error              { return nil }
-func (s *stubClient) InsertRaw(_ context.Context, _ any) error           { return nil }
-func (s *stubClient) Upsert(_ context.Context, _ any, _ ...string) error { return nil }
-func (s *stubClient) Update(_ context.Context, _ any) error              { return nil }
-func (s *stubClient) Get(_ context.Context, _ any, _ string) error       { return nil }
-func (s *stubClient) Query(_ context.Context, _ any) *dg.Query           { return nil }
-func (s *stubClient) Delete(_ context.Context, _ []string) error         { return nil }
-func (s *stubClient) Close()                                             {}
-func (s *stubClient) UpdateSchema(_ context.Context, obj ...any) error {
-	s.appliedTypes = append(s.appliedTypes, obj)
-	return s.schemaErr
-}
-func (s *stubClient) AlterSchema(_ context.Context, schema string) error {
-	s.alteredDQL = append(s.alteredDQL, schema)
-	return s.alterSchemaErr
-}
-func (s *stubClient) GetSchema(_ context.Context) (string, error) { return "", nil }
-func (s *stubClient) DropAll(_ context.Context) error             { return nil }
-func (s *stubClient) DropData(_ context.Context) error            { return nil }
-func (s *stubClient) QueryRaw(_ context.Context, _ string, _ map[string]string) ([]byte, error) {
+func (c *stubClient) Insert(context.Context, any) error                  { return nil }
+func (c *stubClient) InsertRaw(context.Context, any) error               { return nil }
+func (c *stubClient) Upsert(context.Context, any, ...string) error       { return nil }
+func (c *stubClient) Update(context.Context, any) error                  { return nil }
+func (c *stubClient) Get(context.Context, any, string) error             { return nil }
+func (c *stubClient) Query(context.Context, any) *dg.Query               { return nil }
+func (c *stubClient) Delete(context.Context, []string) error             { return nil }
+func (c *stubClient) Close()                                             {}
+func (c *stubClient) UpdateSchema(context.Context, ...any) error         { return c.schemaErr }
+func (c *stubClient) AlterSchema(context.Context, string) error          { return c.alterSchemaErr }
+func (c *stubClient) GetSchema(context.Context) (string, error)          { return "", nil }
+func (c *stubClient) DropAll(context.Context) error                      { return nil }
+func (c *stubClient) DropData(context.Context) error                     { return nil }
+func (c *stubClient) QueryRaw(context.Context, string, map[string]string) ([]byte, error) {
 	return []byte(`{}`), nil
 }
-func (s *stubClient) DgraphClient() (*dgo.Dgraph, func(), error) { return nil, func() {}, nil }
-func (s *stubClient) WithRetry(_ context.Context, _ mg.RetryPolicy, fn func() error) error {
+func (c *stubClient) DgraphClient() (*dgo.Dgraph, func(), error) { return nil, func() {}, nil }
+func (c *stubClient) WithRetry(_ context.Context, _ mg.RetryPolicy, fn func() error) error {
 	return fn()
 }
-func (s *stubClient) LoadData(_ context.Context, _ string, _ ...load.Option) error { return nil }
+func (c *stubClient) LoadData(context.Context, string, ...load.Option) error { return nil }

@@ -13,52 +13,58 @@ type checksumWidget struct {
 	Name  string   `json:"name,omitempty" dgraph:"index=exact"`
 }
 
-func TestChecksumSchema_DQL(t *testing.T) {
-	s := Schema{DQL: "name: string @index(exact) ."}
-	c1 := checksumSchema(s)
-	c2 := checksumSchema(s)
-	assert.Equal(t, c1, c2, "same DQL must produce same checksum")
-	assert.Len(t, c1, 64, "SHA-256 hex is 64 chars")
+func TestStepChecksum_StableAndDistinct(t *testing.T) {
+	s := Step{Name: "add_name", Schema: SchemaChange{Alter: "name: string @index(exact) ."}}
+	c1 := stepChecksum(0, s)
+	require.Len(t, c1, 64, "SHA-256 hex is 64 chars")
+	assert.Equal(t, c1, stepChecksum(0, s), "same step+index → same checksum")
 
-	other := Schema{DQL: "age: int ."}
-	assert.NotEqual(t, c1, checksumSchema(other), "different DQL must differ")
+	assert.NotEqual(t, c1, stepChecksum(1, s), "index is part of identity")
+
+	other := Step{Name: "add_name", Schema: SchemaChange{Alter: "age: int ."}}
+	assert.NotEqual(t, c1, stepChecksum(0, other), "different Alter → different checksum")
+
+	renamed := Step{Name: "rename", Schema: s.Schema}
+	assert.NotEqual(t, c1, stepChecksum(0, renamed), "step name is part of identity")
 }
 
-func TestChecksumSchema_Types(t *testing.T) {
-	s := Schema{Types: []any{&checksumWidget{}}}
-	c1 := checksumSchema(s)
+func TestStepChecksum_Ensure(t *testing.T) {
+	s := Step{Name: "ensure_widget", Schema: SchemaChange{Ensure: []any{&checksumWidget{}}}}
+	c1 := stepChecksum(0, s)
 	require.Len(t, c1, 64)
-	assert.Equal(t, c1, checksumSchema(s), "same types must produce same checksum")
-
-	// Zero Schema → distinct from a non-zero one.
-	assert.NotEqual(t, c1, checksumSchema(Schema{}))
+	assert.Equal(t, c1, stepChecksum(0, s))
+	assert.NotEqual(t, c1, stepChecksum(0, Step{Name: "ensure_widget"}), "zero SchemaChange differs")
 }
 
-type checksumGadget struct {
+// checksumMultiPredicate has several indexed predicates so the dgman TypeSchema
+// carries multiple map entries — the case where TypeSchema.String()'s randomized
+// map iteration would otherwise produce an unstable hash.
+type checksumMultiPredicate struct {
 	UID   string   `json:"uid,omitempty"`
 	DType []string `json:"dgraph.type,omitempty"`
-	Label string   `json:"gadgetLabel,omitempty" dgraph:"predicate=gadget_label index=exact"`
-	Size  int      `json:"gadgetSize,omitempty" dgraph:"predicate=gadget_size index=int"`
+	Name  string   `json:"name,omitempty" dgraph:"index=exact"`
+	Email string   `json:"email,omitempty" dgraph:"index=hash"`
+	Age   int      `json:"age,omitempty" dgraph:"index=int"`
+	City  string   `json:"city,omitempty" dgraph:"index=term"`
 }
 
-type checksumSprocket struct {
-	UID   string   `json:"uid,omitempty"`
-	DType []string `json:"dgraph.type,omitempty"`
-	Name  string   `json:"sprocketName,omitempty" dgraph:"predicate=sprocket_name index=term,trigram"`
-	Teeth int      `json:"sprocketTeeth,omitempty" dgraph:"predicate=sprocket_teeth index=int"`
-}
-
-// TestChecksumSchema_TypesStableAcrossManyCalls guards against the dgman
-// TypeSchema.String() map-ordering non-determinism: with several types and
-// predicates, an order-sensitive hash would vary between calls.
-func TestChecksumSchema_TypesStableAcrossManyCalls(t *testing.T) {
-	s := Schema{Types: []any{&checksumWidget{}, &checksumGadget{}, &checksumSprocket{}}}
-	want := checksumSchema(s)
+// TestStepChecksum_EnsureDeterministicAcrossCalls guards the canonicalTypeSchema
+// fix: an Ensure step's checksum must be identical across many calls, otherwise
+// a struct-derived migration falsely reports drift and fails the immutability
+// guard on re-run.
+func TestStepChecksum_EnsureDeterministicAcrossCalls(t *testing.T) {
+	s := Step{Name: "ensure_multi", Schema: SchemaChange{Ensure: []any{&checksumMultiPredicate{}}}}
+	first := stepChecksum(0, s)
 	for i := 0; i < 50; i++ {
-		assert.Equal(t, want, checksumSchema(s), "checksum must be deterministic across calls (iteration %d)", i)
+		assert.Equal(t, first, stepChecksum(0, s), "Ensure checksum must be stable across calls (call %d)", i)
 	}
+}
 
-	// Type order in the slice must not change the checksum.
-	reordered := Schema{Types: []any{&checksumSprocket{}, &checksumWidget{}, &checksumGadget{}}}
-	assert.Equal(t, want, checksumSchema(reordered), "type order in the slice must not affect the checksum")
+func TestMigrationChecksum_OrderSensitive(t *testing.T) {
+	a := Step{Name: "a", Schema: SchemaChange{Alter: "a: string ."}}
+	b := Step{Name: "b", Schema: SchemaChange{Alter: "b: string ."}}
+	m1 := Migration{ID: 1, Steps: []Step{a, b}}
+	m2 := Migration{ID: 1, Steps: []Step{b, a}}
+	require.Len(t, migrationChecksum(m1), 64)
+	assert.NotEqual(t, migrationChecksum(m1), migrationChecksum(m2), "step order changes the checksum")
 }

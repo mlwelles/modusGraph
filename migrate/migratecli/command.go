@@ -70,6 +70,10 @@ func (c *StatusCmd) Run(p Provider) error {
 		}
 		fmt.Printf("  [x] %d  %s%s\n", e.ID, e.Name, drift)
 	}
+	fmt.Printf("In progress (%d):\n", len(result.InProgress))
+	for _, e := range result.InProgress {
+		fmt.Printf("  [~] %d  %s (%d/%d steps applied — resumes on next up)\n", e.ID, e.Name, e.StepsApplied, e.StepsTotal)
+	}
 	fmt.Printf("Pending (%d):\n", len(result.Pending))
 	for _, e := range result.Pending {
 		fmt.Printf("  [ ] %d  %s\n", e.ID, e.Name)
