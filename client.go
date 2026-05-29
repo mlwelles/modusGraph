@@ -238,9 +238,9 @@ func NewValidator() *validator.Validate {
 	return validator.New()
 }
 
-// NewClient creates a new graph database client instance based on the provided URI.
+// NewClient creates a new graph database client instance based on the provided URL.
 //
-// The function supports two URI schemes:
+// The function supports two URL schemes:
 //   - dgraph://host:port - Connects to a remote Dgraph instance
 //   - file:///path/to/db - Creates or opens a local file-based database
 //
@@ -257,9 +257,9 @@ func NewValidator() *validator.Validate {
 // connected to a remote Dgraph cluster or a local embedded database. This abstraction
 // helps prevent connection issues and provides seamless access to embedded Dgraph.
 //
-// For file-based URIs, the client maintains a singleton Engine instance to ensure
+// For file-based URLs, the client maintains a singleton Engine instance to ensure
 // data consistency across multiple client connections to the same database.
-func NewClient(uri string, opts ...ClientOpt) (Client, error) {
+func NewClient(url string, opts ...ClientOpt) (Client, error) {
 	// Default options
 	options := clientOptions{
 		autoSchema:       false,
@@ -281,7 +281,7 @@ func NewClient(uri string, opts ...ClientOpt) (Client, error) {
 	}
 
 	client := client{
-		uri:     uri,
+		url:     url,
 		options: options,
 		logger:  options.logger,
 	}
@@ -294,25 +294,25 @@ func NewClient(uri string, opts ...ClientOpt) (Client, error) {
 	}
 
 	switch {
-	case strings.HasPrefix(uri, dgraphURIPrefix):
+	case strings.HasPrefix(url, dgraphURIPrefix):
 		client.pool = newClientPool(options.poolSize, func() (*dgo.Dgraph, error) {
-			client.logger.V(2).Info("Opening new Dgraph connection", "uri", uri)
+			client.logger.V(2).Info("Opening new Dgraph connection", "url", url)
 			if len(options.grpcDialOptions) == 0 {
-				return dgo.Open(uri) // unchanged path; preserves all behavior
+				return dgo.Open(url) // unchanged path; preserves all behavior
 			}
-			return openWithDialOptions(uri, options.grpcDialOptions)
+			return openWithDialOptions(url, options.grpcDialOptions)
 		}, client.logger)
 		dg.SetLogger(client.logger)
 		clientMap[key] = client
 		return client, nil
-	case strings.HasPrefix(uri, fileURIPrefix):
+	case strings.HasPrefix(url, fileURIPrefix):
 		// parse off the file:// prefix
-		uri = uri[len(fileURIPrefix):]
-		if _, err := os.Stat(uri); err != nil {
+		url = url[len(fileURIPrefix):]
+		if _, err := os.Stat(url); err != nil {
 			return nil, err
 		}
 		engine, err := NewEngine(Config{
-			dataDir:     uri,
+			dataDir:     url,
 			logger:      client.logger,
 			cacheSizeMB: options.cacheSizeMB,
 		})
@@ -343,12 +343,12 @@ func NewClient(uri string, opts ...ClientOpt) (Client, error) {
 		clientMap[key] = client
 		return client, nil
 	}
-	return nil, errors.New("invalid uri")
+	return nil, errors.New("invalid url")
 
 }
 
 type client struct {
-	uri     string
+	url     string
 	engine  *Engine
 	options clientOptions
 	pool    *clientPool
@@ -360,7 +360,7 @@ func (c client) key() string {
 	if c.options.validator != nil {
 		validatorKey = fmt.Sprintf("%p", c.options.validator)
 	}
-	return fmt.Sprintf("%s:%t:%d:%d:%d:%s:%s:%d", c.uri, c.options.autoSchema, c.options.poolSize,
+	return fmt.Sprintf("%s:%t:%d:%d:%d:%s:%s:%d", c.url, c.options.autoSchema, c.options.poolSize,
 		c.options.maxEdgeTraversal, c.options.cacheSizeMB, c.options.namespace, validatorKey,
 		len(c.options.grpcDialOptions))
 }

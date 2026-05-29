@@ -42,12 +42,12 @@ type TestEntity struct {
 }
 
 func main() {
-    // Use a file URI to connect to a in-process modusGraph instance, ensure that the directory exists
-    uri := "file:///tmp/modusgraph"
-    // Assigning a Dgraph URI will connect to a remote Dgraph server
-    // uri := "dgraph://localhost:9080"
+    // Use a file URL to connect to a in-process modusGraph instance, ensure that the directory exists
+    url := "file:///tmp/modusgraph"
+    // Assigning a Dgraph URL will connect to a remote Dgraph server
+    // url := "dgraph://localhost:9080"
 
-    client, err := mg.NewClient(uri, mg.WithAutoSchema(true))
+    client, err := mg.NewClient(url, mg.WithAutoSchema(true))
     if err != nil {
         panic(err)
     }
@@ -79,19 +79,19 @@ func main() {
 
 ## Creating a Client
 
-The `NewClient` function takes a URI and optional configuration options.
+The `NewClient` function takes a URL and optional configuration options.
 
 ```go
-client, err := mg.NewClient(uri)
+client, err := mg.NewClient(url)
 if err != nil {
     panic(err)
 }
 defer client.Close()
 ```
 
-### URI Options
+### URL Options
 
-modusGraph supports two URI schemes for managing graph databases:
+modusGraph supports two URL schemes for managing graph databases:
 
 #### `file://` - Local File-Based Database
 
@@ -109,7 +109,7 @@ client, err := mg.NewClient("file:///path/to/data")
 
 #### `dgraph://` - Remote Dgraph Server
 
-Connects to a Dgraph cluster. For more details on the Dgraph URI format, see the
+Connects to a Dgraph cluster. For more details on the Dgraph URL format, see the
 [Dgraph Dgo documentation](https://github.com/dgraph-io/dgo#connection-strings).
 
 ```go
@@ -117,7 +117,7 @@ Connects to a Dgraph cluster. For more details on the Dgraph URI format, see the
 client, err := mg.NewClient("dgraph://hostname:9080")
 ```
 
-You can have multiple remote clients per process provided the URIs are distinct.
+You can have multiple remote clients per process provided the URLs are distinct.
 
 ### Configuration Options
 
@@ -130,7 +130,7 @@ and update the graph database schema based on the struct tags of objects you ins
 
 ```go
 // Enable automatic schema management
-client, err := mg.NewClient(uri, mg.WithAutoSchema(true))
+client, err := mg.NewClient(url, mg.WithAutoSchema(true))
 ```
 
 #### WithPoolSize(int)
@@ -140,7 +140,7 @@ connections.
 
 ```go
 // Set pool size to 20 connections
-client, err := mg.NewClient(uri, mg.WithPoolSize(20))
+client, err := mg.NewClient(url, mg.WithPoolSize(20))
 ```
 
 #### WithMaxEdgeTraversal(int)
@@ -149,7 +149,7 @@ Sets the maximum number of edges to traverse when querying. The default is 10 ed
 
 ```go
 // Set max edge traversal to 20 edges
-client, err := mg.NewClient(uri, mg.WithMaxEdgeTraversal(20))
+client, err := mg.NewClient(url, mg.WithMaxEdgeTraversal(20))
 ```
 
 #### WithLogger(logr.Logger)
@@ -159,7 +159,7 @@ Configures structured logging with custom verbosity levels. By default, logging 
 ```go
 // Set up a logger
 logger := logr.New(logr.Discard())
-client, err := mg.NewClient(uri, mg.WithLogger(logger))
+client, err := mg.NewClient(url, mg.WithLogger(logger))
 ```
 
 #### WithValidator(Validator)
@@ -185,7 +185,7 @@ validate.RegisterValidation("custom", func(fl validator.FieldLevel) bool {
 })
 
 // Create client with the validator
-client, err := mg.NewClient(uri, mg.WithValidator(validate))
+client, err := mg.NewClient(url, mg.WithValidator(validate))
 ```
 
 See the [validator test](validate_test.go) for more examples.
@@ -214,7 +214,7 @@ You can combine multiple options:
 
 ```go
 // Using multiple configuration options
-client, err := mg.NewClient(uri,
+client, err := mg.NewClient(url,
     mg.WithAutoSchema(true),
     mg.WithPoolSize(20),
     mg.WithLogger(logger))
@@ -550,7 +550,7 @@ Enable AutoSchema when creating a client:
 
 ```go
 // Enable automatic schema management
-client, err := mg.NewClient(uri, mg.WithAutoSchema(true))
+client, err := mg.NewClient(url, mg.WithAutoSchema(true))
 if err != nil {
     log.Fatalf("Failed to create client: %v", err)
 }
@@ -832,7 +832,7 @@ and explore the package. These are organized in the `cmd` and `examples` folders
   - See the [Code Generation](#code-generation) section above for details.
 
 - **`cmd/query`** *(deprecated)*: Standalone DQL query tool. Use the generated CLI's `query`
-  subcommand instead — it provides the same functionality with `--addr`/`--dir` support.
+  subcommand instead — it provides the same functionality with `--url`/`--dir` support.
   - See [`cmd/query/README.md`](./cmd/query/README.md) for legacy usage.
 
 ### Examples (`examples` folder)
