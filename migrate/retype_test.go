@@ -8,7 +8,10 @@ import (
 )
 
 func TestRetypePredicate_ExpandsToFiveIrreversibleSteps(t *testing.T) {
-	steps := RetypePredicate(RetypeSpec{Predicate: "height", To: Int, Index: "int"})
+	steps := RetypePredicate(RetypeSpec{
+		Predicate: "height", To: Int, Index: "int",
+		Convert: func(old string) (any, error) { return old, nil },
+	})
 	require.Len(t, steps, 5)
 	assert.Equal(t, []string{
 		"height_retype_stage", "height_retype_verify", "height_retype_swap",
@@ -18,4 +21,10 @@ func TestRetypePredicate_ExpandsToFiveIrreversibleSteps(t *testing.T) {
 	for i, s := range steps {
 		assert.Nil(t, s.Down, "step %d (%s) must be irreversible", i, s.Name)
 	}
+}
+
+func TestRetypePredicate_PanicsOnNilConvert(t *testing.T) {
+	assert.PanicsWithValue(t, "migrate: RetypeSpec.Convert must not be nil", func() {
+		RetypePredicate(RetypeSpec{Predicate: "height", To: Int, Index: "int"})
+	}, "a nil Convert must fail loudly at construction, not deep in the stage step")
 }

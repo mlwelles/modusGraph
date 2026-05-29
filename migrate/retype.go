@@ -22,13 +22,17 @@ const (
 
 // RetypeSpec describes an in-place predicate type change with a value transform.
 type RetypeSpec struct {
-	// Predicate is the existing predicate to retype; it keeps its name.
+	// Predicate is the existing predicate to retype; it keeps its name. The
+	// source predicate must currently be of Dgraph type string: the stage step
+	// reads each value into a Go string, so a non-string source would silently
+	// decode to "".
 	Predicate string
 	// To is the target scalar type.
 	To ScalarType
 	// Index is an optional tokenizer for the retyped predicate (e.g. "int"); "" = none.
 	Index string
-	// Convert maps each existing (string-rendered) value to its new typed value.
+	// Convert maps each existing value, rendered as a string, to its new typed
+	// value. It is required; RetypePredicate panics if it is nil.
 	Convert func(old string) (any, error)
 }
 
@@ -49,9 +53,16 @@ func (s RetypeSpec) schemaLine(pred string) string {
 //  4. copy    — copy staging values onto the retyped predicate
 //  5. cleanup — drop the staging predicate
 //
+// The source predicate must be of Dgraph type string; Convert receives each
+// value as its string rendering. spec.Convert is required: RetypePredicate
+// panics if it is nil.
+//
 // The op is irreversible (lossy): every step's Down is nil. To reverse, author a
 // new forward RetypePredicate(To→original) with an inverse Convert.
 func RetypePredicate(spec RetypeSpec) []Step {
+	if spec.Convert == nil {
+		panic("migrate: RetypeSpec.Convert must not be nil")
+	}
 	staging := spec.staging()
 	return []Step{
 		{
@@ -96,7 +107,7 @@ func retypeStage(ctx context.Context, c mg.Client, spec RetypeSpec, staging stri
 	for _, r := range res.Q {
 		conv, err := spec.Convert(r.V)
 		if err != nil {
-			return fmt.Errorf("converting %s for %s: %w", spec.Predicate, r.UID, err)
+			return fmt.Errorf("migrate: convert predicate %s uid %s: %w", spec.Predicate, r.UID, err)
 		}
 		rows = append(rows, map[string]any{"uid": r.UID, staging: conv})
 	}
