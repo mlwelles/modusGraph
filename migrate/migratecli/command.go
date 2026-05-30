@@ -132,7 +132,7 @@ type CreateCmd struct {
 	Name        string `arg:"" help:"Human name for the migration (sanitized to snake_case)."`
 	Register    bool   `default:"true" negatable:"" help:"Append the new migration to the All slice."`
 	ProjectRoot string `help:"Project root (defaults to the current directory)." type:"path"`
-	Dir         string `help:"Migrations directory (defaults to <root>/migrations)." type:"path"`
+	Dir         string `name:"migrations-dir" help:"Migrations directory (defaults to <root>/migrations)." type:"path"`
 }
 
 func (c *CreateCmd) Run(p Provider) error {
@@ -161,7 +161,7 @@ func (c *CreateCmd) Run(p Provider) error {
 type DiffCmd struct {
 	Check       bool   `help:"Exit non-zero if the structs have drifted from the snapshot."`
 	ProjectRoot string `help:"Project root (defaults to the current directory)." type:"path"`
-	Dir         string `help:"Migrations directory (defaults to <root>/migrations)." type:"path"`
+	Dir         string `name:"migrations-dir" help:"Migrations directory (defaults to <root>/migrations)." type:"path"`
 }
 
 func (c *DiffCmd) Run(p Provider) error {
@@ -182,7 +182,7 @@ func (c *DiffCmd) Run(p Provider) error {
 // generate (a retype or drop).
 type SnapshotCmd struct {
 	ProjectRoot string `help:"Project root (defaults to the current directory)." type:"path"`
-	Dir         string `help:"Migrations directory (defaults to <root>/migrations)." type:"path"`
+	Dir         string `name:"migrations-dir" help:"Migrations directory (defaults to <root>/migrations)." type:"path"`
 }
 
 func (c *SnapshotCmd) Run(p Provider) error {
