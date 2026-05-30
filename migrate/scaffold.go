@@ -121,6 +121,13 @@ func Scaffold(p ScaffoldParams) (ScaffoldReport, error) {
 	}
 	id := timestampID(now)
 
+	// Go excludes *_test.go files from the package build, so a migration whose
+	// file would be named that way silently fails to compile. Reject it before
+	// writing anything rather than emit an uncompilable migration.
+	if strings.HasSuffix(fmt.Sprintf("%d_%s.go", id, name), "_test.go") {
+		return ScaffoldReport{}, fmt.Errorf("migrate: migration name %q produces the Go test file %d_%s.go, which Go excludes from the package build; choose a name that does not end in \"test\"", name, id, name)
+	}
+
 	current := MarshalSchema(p.Models...)
 	statePath := filepath.Join(p.Dir, schemaStateFile)
 	prev, _ := os.ReadFile(statePath) // missing → empty

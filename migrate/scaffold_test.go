@@ -286,6 +286,31 @@ func TestScaffold_FlaggedOnlyEmitsStubAndNotes(t *testing.T) {
 	}
 }
 
+func TestScaffold_RejectsTestSuffixName(t *testing.T) {
+	_, dir := tempProject(t)
+	_, err := Scaffold(ScaffoldParams{
+		Migrations: []Migration{{ID: 20260528000001, After: 0, Name: "baseline"}},
+		Models:     []any{&scafBase{}},
+		Dir:        dir,
+		Package:    "migrations",
+		Name:       "smoke_test",
+		Now:        time.Date(2026, 6, 1, 9, 0, 0, 0, time.UTC),
+	})
+	if err == nil {
+		t.Fatal("a name producing a _test.go file must be rejected")
+	}
+	if !strings.Contains(err.Error(), "_test") {
+		t.Errorf("error should explain the _test.go problem: %v", err)
+	}
+	// Rejection happens before any write.
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if strings.Contains(e.Name(), "smoke_test") {
+			t.Errorf("rejected scaffold must not write files: %s", e.Name())
+		}
+	}
+}
+
 func TestSnapshot_RewritesStateOnly(t *testing.T) {
 	_, dir := tempProject(t)
 	path, err := Snapshot(ScaffoldParams{Models: []any{&scafAdded{}}, Dir: dir})
