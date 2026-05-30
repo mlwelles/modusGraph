@@ -4,12 +4,23 @@ import (
 	"context"
 	"sort"
 	"sync"
+	"testing"
 
 	dg "github.com/dolan-in/dgman/v2"
 	"github.com/dgraph-io/dgo/v250"
 	mg "github.com/matthewmcneely/modusgraph"
 	"github.com/matthewmcneely/modusgraph/load"
 )
+
+// mustMarshalSchema renders the models' schema, failing the test on a conflict.
+func mustMarshalSchema(t *testing.T, models ...any) string {
+	t.Helper()
+	s, err := MarshalSchema(models...)
+	if err != nil {
+		t.Fatalf("MarshalSchema: %v", err)
+	}
+	return s
+}
 
 // fakeStore is an in-memory store for unit-testing the Runner.
 type fakeStore struct {

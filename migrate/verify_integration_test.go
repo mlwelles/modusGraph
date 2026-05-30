@@ -25,7 +25,7 @@ func TestVerify_CleanThenReportsMissing(t *testing.T) {
 	c := newEmbeddedClient(t)
 	ctx := context.Background()
 
-	require.NoError(t, c.AlterSchema(ctx, MarshalSchema(&verifyV1{})))
+	require.NoError(t, c.AlterSchema(ctx, mustMarshalSchema(t, &verifyV1{})))
 
 	// The live schema matches the structs it was built from.
 	clean, err := Verify(ctx, c, []any{&verifyV1{}})

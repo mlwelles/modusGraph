@@ -169,7 +169,10 @@ func (c *DiffCmd) Run(p Provider) error {
 	if err != nil {
 		return err
 	}
-	delta := migrate.Diff(dir, p.Models())
+	delta, err := migrate.Diff(dir, p.Models())
+	if err != nil {
+		return err
+	}
 	printDelta(delta)
 	if c.Check && !delta.Empty() {
 		return fmt.Errorf("migrate diff: schema drift detected — run `migrate create <name>` to capture it")

@@ -10,11 +10,11 @@ import (
 )
 
 func TestMarshalSchema_DeterministicAndCanonical(t *testing.T) {
-	got := MarshalSchema(&tree{})
+	got := mustMarshalSchema(t, &tree{})
 	require.NotEmpty(t, got)
 	assert.Contains(t, got, "height:")
 	// Stable across calls — guards against dgman's map-order non-determinism.
-	assert.Equal(t, got, MarshalSchema(&tree{}))
+	assert.Equal(t, got, mustMarshalSchema(t, &tree{}))
 	// Byte-identical to the rendering an equivalent Ensure step is checksummed
 	// from, so freezing a live Ensure list captures exactly what it would apply.
 	ts := dg.NewTypeSchema()
@@ -22,8 +22,40 @@ func TestMarshalSchema_DeterministicAndCanonical(t *testing.T) {
 	assert.Equal(t, canonicalTypeSchema(ts), got)
 }
 
+// relPlain and relReverse declare the same predicate inconsistently — one plain,
+// one with reverse — so MarshalSchema must reject the pair.
+type relTarget struct {
+	UID   string   `json:"uid,omitempty"`
+	DType []string `json:"dgraph.type,omitempty" dgraph:"RelTarget"`
+}
+
+type relPlain struct {
+	UID    string       `json:"uid,omitempty"`
+	DType  []string     `json:"dgraph.type,omitempty" dgraph:"RelPlain"`
+	Target []*relTarget `json:"target,omitempty" dgraph:"predicate=shared_edge"`
+}
+
+type relReverse struct {
+	UID    string       `json:"uid,omitempty"`
+	DType  []string     `json:"dgraph.type,omitempty" dgraph:"RelReverse"`
+	Target []*relTarget `json:"target,omitempty" dgraph:"predicate=shared_edge reverse"`
+}
+
+func TestMarshalSchema_ConflictNamesStructs(t *testing.T) {
+	_, err := MarshalSchema(&relPlain{}, &relReverse{})
+	require.Error(t, err, "inconsistent predicate declarations must be rejected")
+	msg := err.Error()
+	for _, want := range []string{"shared_edge", "relPlain", "relReverse", "@reverse", "must agree"} {
+		assert.Contains(t, msg, want)
+	}
+
+	// Identical declarations marshal cleanly.
+	_, err = MarshalSchema(&relReverse{}, &relReverse{})
+	assert.NoError(t, err)
+}
+
 func TestEnsureSchemaChecksum_DependsOnlyOnString(t *testing.T) {
-	frozen := MarshalSchema(&tree{})
+	frozen := mustMarshalSchema(t, &tree{})
 	step := Step{Name: "baseline", Schema: SchemaChange{EnsureSchema: frozen}}
 	// Deterministic for a fixed string.
 	assert.Equal(t, stepChecksum(0, step), stepChecksum(0, step))
@@ -43,7 +75,7 @@ func TestEnsureSchema_AppliesAndIsIdempotent(t *testing.T) {
 		ID:   20260104000000,
 		Name: "frozen_baseline",
 		Steps: []Step{
-			{Name: "baseline_schema", Schema: SchemaChange{EnsureSchema: MarshalSchema(&tree{})}},
+			{Name: "baseline_schema", Schema: SchemaChange{EnsureSchema: mustMarshalSchema(t, &tree{})}},
 		},
 	}
 	require.NoError(t, Run(ctx, c, []Migration{m}))

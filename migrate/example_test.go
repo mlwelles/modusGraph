@@ -41,7 +41,7 @@ func Example_additive() {
 // MarshalSchema output into a const or an embedded file) rather than calling
 // MarshalSchema from the migration, which would re-derive it from live structs.
 func Example_frozenSchema() {
-	frozen := migrate.MarshalSchema(&Tree{})
+	frozen, _ := migrate.MarshalSchema(&Tree{})
 	m := migrate.Migration{
 		ID:   20260104000000,
 		Name: "baseline",
@@ -166,7 +166,8 @@ func Example_scaffold() {
 	dir := filepath.Join(root, "migrations")
 	_ = os.Mkdir(dir, 0o755)
 	_ = os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/demo\n\ngo 1.21\n"), 0o644)
-	_ = os.WriteFile(filepath.Join(dir, "schema_state.schema"), []byte(migrate.MarshalSchema(&Tree{})), 0o644)
+	state, _ := migrate.MarshalSchema(&Tree{})
+	_ = os.WriteFile(filepath.Join(dir, "schema_state.schema"), []byte(state), 0o644)
 
 	report, err := migrate.Scaffold(migrate.ScaffoldParams{
 		Migrations: []migrate.Migration{{ID: 20260528000001, After: 0, Name: "baseline"}},

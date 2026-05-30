@@ -58,8 +58,17 @@ func write(t *testing.T, path, content string) {
 	}
 }
 
+func mustSchema(t *testing.T, models ...any) string {
+	t.Helper()
+	s, err := migrate.MarshalSchema(models...)
+	if err != nil {
+		t.Fatalf("MarshalSchema: %v", err)
+	}
+	return s
+}
+
 func TestCreateCmd_WritesMigrationFiles(t *testing.T) {
-	root, dir := tempProject(t, migrate.MarshalSchema(&cmdBase{}))
+	root, dir := tempProject(t, mustSchema(t, &cmdBase{}))
 	p := &fakeProvider{
 		migs:   []migrate.Migration{{ID: 20260528000001, After: 0, Name: "baseline"}},
 		models: []any{&cmdAdded{}},
@@ -93,7 +102,7 @@ func TestCreateCmd_WritesMigrationFiles(t *testing.T) {
 }
 
 func TestDiffCmd_CheckExitsNonZeroOnDrift(t *testing.T) {
-	root, _ := tempProject(t, migrate.MarshalSchema(&cmdBase{}))
+	root, _ := tempProject(t, mustSchema(t, &cmdBase{}))
 
 	// Models carry an extra predicate absent from the snapshot → drift.
 	drifted := &fakeProvider{models: []any{&cmdAdded{}}}
