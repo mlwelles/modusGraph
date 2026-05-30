@@ -3,7 +3,6 @@ package migrate
 import (
 	"context"
 	"fmt"
-	"sort"
 	"time"
 
 	mg "github.com/matthewmcneely/modusgraph"
@@ -57,9 +56,13 @@ type Step struct {
 }
 
 // Migration is one ordered, run-once change identified by a UTC timestamp ID
-// (YYYYMMDDHHMMSS). Use timestamp IDs to avoid merge collisions across branches.
+// (YYYYMMDDHHMMSS). After names the migration this one follows (its
+// predecessor's ID); the zero value marks the single root. The runner orders
+// migrations by walking After, not by sorting IDs. Use timestamp IDs to avoid
+// merge collisions across branches.
 type Migration struct {
 	ID    int64
+	After int64
 	Name  string
 	Steps []Step
 }
@@ -124,10 +127,12 @@ func run(ctx context.Context, c mg.Client, s store, migrations []Migration) (err
 		appliedSet[rec.ID] = struct{}{}
 	}
 
-	sorted := append([]Migration(nil), migrations...)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].ID < sorted[j].ID })
+	ordered, err := buildChain(migrations)
+	if err != nil {
+		return err
+	}
 
-	for _, m := range sorted {
+	for _, m := range ordered {
 		if _, done := appliedSet[m.ID]; done {
 			continue
 		}
@@ -231,24 +236,34 @@ func down(ctx context.Context, c mg.Client, s store, migrations []Migration, toV
 	if err != nil {
 		return err
 	}
+	ordered, err := buildChain(migrations)
+	if err != nil {
+		return err
+	}
 	byID := make(map[int64]Migration, len(migrations))
 	for _, m := range migrations {
 		byID[m.ID] = m
 	}
-
-	var toRollback []migrationRec
+	appliedSet := make(map[int64]struct{}, len(applied))
 	for _, rec := range applied {
+		appliedSet[rec.ID] = struct{}{}
 		if rec.ID > toVersion {
-			toRollback = append(toRollback, rec)
+			if _, ok := byID[rec.ID]; !ok {
+				return &ErrMissingApplied{ID: rec.ID}
+			}
 		}
 	}
-	sort.Slice(toRollback, func(i, j int) bool { return toRollback[i].ID > toRollback[j].ID })
 
-	for _, rec := range toRollback {
-		m, ok := byID[rec.ID]
-		if !ok {
-			return &ErrMissingApplied{ID: rec.ID}
+	// Migrations to roll back: applied and newer than toVersion, collected in
+	// chain order (root->head), then reversed so we undo head-first.
+	var toRollback []Migration
+	for _, m := range ordered {
+		if _, ok := appliedSet[m.ID]; ok && m.ID > toVersion {
+			toRollback = append(toRollback, m)
 		}
+	}
+
+	for _, m := range toRollback {
 		for _, st := range m.Steps {
 			if st.Down == nil {
 				return &ErrIrreversible{ID: m.ID, Name: m.Name}
@@ -256,11 +271,11 @@ func down(ctx context.Context, c mg.Client, s store, migrations []Migration, toV
 		}
 	}
 
-	for _, rec := range toRollback {
-		m := byID[rec.ID]
-		for i := len(m.Steps) - 1; i >= 0; i-- {
-			if err := m.Steps[i].Down(ctx, c); err != nil {
-				return &ErrStepFailed{MigrationID: m.ID, StepName: m.Steps[i].Name, Index: i, Err: err}
+	for i := len(toRollback) - 1; i >= 0; i-- {
+		m := toRollback[i]
+		for j := len(m.Steps) - 1; j >= 0; j-- {
+			if err := m.Steps[j].Down(ctx, c); err != nil {
+				return &ErrStepFailed{MigrationID: m.ID, StepName: m.Steps[j].Name, Index: j, Err: err}
 			}
 		}
 		if err := s.removeMigration(ctx, m.ID); err != nil {
@@ -291,11 +306,13 @@ func status(ctx context.Context, s store, migrations []Migration) (StatusResult,
 		appliedSet[rec.ID] = rec
 	}
 
-	sorted := append([]Migration(nil), migrations...)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].ID < sorted[j].ID })
+	ordered, err := buildChain(migrations)
+	if err != nil {
+		return StatusResult{}, err
+	}
 
 	var res StatusResult
-	for _, m := range sorted {
+	for _, m := range ordered {
 		entry := StatusEntry{ID: m.ID, Name: m.Name, StepsTotal: len(m.Steps)}
 		if rec, ok := appliedSet[m.ID]; ok {
 			computed := migrationChecksum(m)

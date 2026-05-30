@@ -35,6 +35,7 @@ func stepChecksum(index int, s Step) string {
 func migrationChecksum(m Migration) string {
 	h := sha256.New()
 	fmt.Fprintf(h, "id:%d\n", m.ID)
+	fmt.Fprintf(h, "after:%d\n", m.After)
 	for i, s := range m.Steps {
 		h.Write([]byte(stepChecksum(i, s)))
 	}

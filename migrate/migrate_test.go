@@ -184,8 +184,10 @@ func TestRun_MultiVersionAppliesAllInOrder(t *testing.T) {
 	var calls []string
 	m1 := makeMigration(20260101000000, "one", []string{"a"}, &calls)
 	m2 := makeMigration(20260102000000, "two", []string{"b"}, &calls)
+	m2.After = m1.ID
 	m3 := makeMigration(20260103000000, "three", []string{"c"}, &calls)
-	// Register out of order to prove the runner sorts by ID.
+	m3.After = m2.ID
+	// Register out of order to prove the runner orders by the After chain, not slice order.
 	require.NoError(t, run(ctx, c, s, []Migration{m3, m1, m2}))
 
 	assert.Equal(t, []string{"20260101000000/a", "20260102000000/b", "20260103000000/c"}, calls)
@@ -236,14 +238,16 @@ func TestDown_MultiVersionToMiddleLeavesCorrectSubset(t *testing.T) {
 	var calls []string
 	m1 := makeMigration(20260101000000, "one", []string{"a"}, &calls)
 	m2 := makeMigration(20260102000000, "two", []string{"b"}, &calls)
+	m2.After = m1.ID
 	m3 := makeMigration(20260103000000, "three", []string{"c"}, &calls)
+	m3.After = m2.ID
 	require.NoError(t, run(ctx, c, s, []Migration{m1, m2, m3}))
 	calls = nil
 
 	// Roll back everything newer than m1.
 	require.NoError(t, down(ctx, c, s, []Migration{m1, m2, m3}, 20260101000000))
 
-	assert.Equal(t, []string{"down 20260103000000/c", "down 20260102000000/b"}, calls, "descending by ID")
+	assert.Equal(t, []string{"down 20260103000000/c", "down 20260102000000/b"}, calls, "reverse chain order")
 	migs, _ := s.loadAppliedMigrations(ctx)
 	require.Len(t, migs, 1)
 	assert.Equal(t, int64(20260101000000), migs[0].ID, "only m1 remains")
@@ -257,8 +261,10 @@ func TestStatus_ReportsAppliedInProgressPending(t *testing.T) {
 	require.NoError(t, run(ctx, c, s, []Migration{applied}))
 
 	inProgress := makeMigration(20260102000000, "wip", []string{"x", "y"}, &calls)
+	inProgress.After = applied.ID
 	s.seedStep(inProgress.ID, "x", 0, stepChecksum(0, inProgress.Steps[0]))
 	pending := makeMigration(20260103000000, "pending", []string{"z"}, &calls)
+	pending.After = inProgress.ID
 
 	res, err := status(ctx, s, []Migration{applied, inProgress, pending})
 	require.NoError(t, err)
@@ -273,10 +279,10 @@ func TestVersion_ReturnsHighestApplied(t *testing.T) {
 	s := newFakeStore()
 	c := &stubClient{}
 	var calls []string
-	require.NoError(t, run(ctx, c, s, []Migration{
-		makeMigration(20260101000000, "one", []string{"a"}, &calls),
-		makeMigration(20260102000000, "two", []string{"b"}, &calls),
-	}))
+	one := makeMigration(20260101000000, "one", []string{"a"}, &calls)
+	two := makeMigration(20260102000000, "two", []string{"b"}, &calls)
+	two.After = one.ID
+	require.NoError(t, run(ctx, c, s, []Migration{one, two}))
 	v, err := version(ctx, s)
 	require.NoError(t, err)
 	assert.Equal(t, int64(20260102000000), v)

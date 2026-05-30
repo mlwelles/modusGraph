@@ -103,3 +103,54 @@ func short(s string) string {
 	}
 	return s
 }
+
+// ErrDuplicateID is returned when two registered migrations share an ID.
+type ErrDuplicateID struct {
+	ID    int64
+	Names [2]string
+}
+
+func (e *ErrDuplicateID) Error() string {
+	return fmt.Sprintf("migrate: duplicate migration ID %d — used by %q and %q; IDs must be unique", e.ID, e.Names[0], e.Names[1])
+}
+
+// ErrNoRoot is returned when no migration has After == 0.
+type ErrNoRoot struct{}
+
+func (e *ErrNoRoot) Error() string {
+	return "migrate: no root migration (none has After == 0)"
+}
+
+// ErrMultipleRoots is returned when more than one migration has After == 0.
+type ErrMultipleRoots struct{ IDs []int64 }
+
+func (e *ErrMultipleRoots) Error() string {
+	return fmt.Sprintf("migrate: multiple root migrations (After == 0): %v — exactly one is allowed; set After on all but the baseline", e.IDs)
+}
+
+// ErrUnknownPredecessor is returned when a migration's After names no registered migration.
+type ErrUnknownPredecessor struct {
+	ID    int64
+	After int64
+}
+
+func (e *ErrUnknownPredecessor) Error() string {
+	return fmt.Sprintf("migrate: migration %d has After %d, which is not a registered migration", e.ID, e.After)
+}
+
+// ErrDivergentHistory is returned when two or more migrations share a predecessor.
+type ErrDivergentHistory struct {
+	After    int64
+	Children []int64
+}
+
+func (e *ErrDivergentHistory) Error() string {
+	return fmt.Sprintf("migrate: divergent history — predecessor %d has %d children: %v. Re-point one migration's After to the other to linearize. Run `migrate history --tree` to see the chain.", e.After, len(e.Children), e.Children)
+}
+
+// ErrCycle is returned when following After links forms a loop.
+type ErrCycle struct{ IDs []int64 }
+
+func (e *ErrCycle) Error() string {
+	return fmt.Sprintf("migrate: migration chain has a cycle involving %v", e.IDs)
+}
