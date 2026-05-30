@@ -36,6 +36,7 @@ type MigrateCmd struct {
 	Down    DownCmd    `cmd:"" help:"Roll back migrations to a target version."`
 	Status  StatusCmd  `cmd:"" help:"Show applied and pending migrations."`
 	Version VersionCmd `cmd:"" help:"Print the current migration version."`
+	History HistoryCmd `cmd:"" help:"Show the migration chain and flag a broken history."`
 }
 
 // UpCmd applies pending migrations.
@@ -79,6 +80,23 @@ func (c *StatusCmd) Run(p Provider) error {
 		fmt.Printf("  [ ] %d  %s\n", e.ID, e.Name)
 	}
 	return nil
+}
+
+// HistoryCmd prints the migration chain in order, annotated with applied state.
+// It renders even when the chain is broken — showing the fork is the point — and
+// returns the structural error so the process exits non-zero, doubling as a CI
+// chain lint.
+type HistoryCmd struct {
+	Tree    bool `help:"Render the chain as a tree, marking forks."`
+	Verbose bool `help:"Show each migration's step count and names."`
+}
+
+func (c *HistoryCmd) Run(p Provider) error {
+	res, err := migrate.History(context.Background(), p.Client(), p.Migrations())
+	if len(res.Entries) > 0 {
+		fmt.Print(migrate.RenderHistory(res, c.Tree, c.Verbose))
+	}
+	return err
 }
 
 // VersionCmd prints the highest applied migration ID.
