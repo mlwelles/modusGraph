@@ -26,6 +26,56 @@ func moviesDir(t *testing.T) string {
 	return filepath.Join(filepath.Dir(genDir), "parser", "testdata", "movies", "schema")
 }
 
+// TestGenerate_EmitsModelsAggregate asserts the schema marker file includes a
+// Models() aggregate with exactly one zero-value entry per entity — the list
+// migrate scaffolding/verification consumes.
+func TestGenerate_EmitsModelsAggregate(t *testing.T) {
+	dir := moviesDir(t)
+	pkg, err := parser.Parse(dir)
+	if err != nil {
+		t.Fatalf("Parse(%s): %v", dir, err)
+	}
+	tmpDir := t.TempDir()
+	if err := Generate(pkg, flatConfig(pkg, tmpDir)); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	entries, err := os.ReadDir(tmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var marker string
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(tmpDir, e.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(b), "SchemaTypeName") {
+			marker = string(b)
+			break
+		}
+	}
+	if marker == "" {
+		t.Fatal("no marker file (declaring SchemaTypeName) was generated")
+	}
+
+	idx := strings.Index(marker, "func Models() []any {")
+	if idx < 0 {
+		t.Fatalf("marker file missing Models() aggregate:\n%s", marker)
+	}
+	entities := strings.Count(marker, ") SchemaTypeName() string")
+	if entities == 0 {
+		t.Fatal("test fixture parsed no entities")
+	}
+	got := strings.Count(marker[idx:], "{},")
+	if got != entities {
+		t.Fatalf("Models() has %d entries, want %d (one per entity):\n%s", got, entities, marker[idx:])
+	}
+}
+
 // goldenDir returns the path to the legacy flat golden test data directory.
 // As of Task 18, this directory contains only a .gitkeep — the old flat goldens
 // were deleted and replaced by the split layout under parser/testdata/movies/.
