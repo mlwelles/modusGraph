@@ -29,12 +29,13 @@ func (e *ErrMigrationsDirNotFound) Error() string {
 		"(and --dir if your migrations live elsewhere).", e.Dir)
 }
 
-// resolveDir locates and validates the migrations directory and infers its Go
+// ResolveDir locates and validates the migrations directory and infers its Go
 // package. Root is projectRoot or the current directory; it must contain go.mod.
 // The directory is <root>/migrations unless dir overrides it, and it must
-// already exist. resolveDir performs no writes, so a failure leaves the project
-// untouched.
-func resolveDir(projectRoot, dir string) (absDir, pkg string, err error) {
+// already exist. ResolveDir performs no writes, so a failure leaves the project
+// untouched. The CLI calls it before scaffolding to fail fast with an actionable
+// message when run from the wrong place.
+func ResolveDir(projectRoot, dir string) (absDir, pkg string, err error) {
 	root := projectRoot
 	if root == "" {
 		cwd, err := os.Getwd()

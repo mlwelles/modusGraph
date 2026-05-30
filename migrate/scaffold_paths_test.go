@@ -10,7 +10,7 @@ import (
 
 func TestResolveDir_Success(t *testing.T) {
 	root, dir := tempProject(t)
-	absDir, pkg, err := resolveDir(root, "")
+	absDir, pkg, err := ResolveDir(root, "")
 	if err != nil {
 		t.Fatalf("resolveDir: %v", err)
 	}
@@ -24,7 +24,7 @@ func TestResolveDir_Success(t *testing.T) {
 
 func TestResolveDir_NoGoModFails(t *testing.T) {
 	root := t.TempDir() // no go.mod
-	_, _, err := resolveDir(root, "")
+	_, _, err := ResolveDir(root, "")
 	var e *ErrNotProjectRoot
 	if !errors.As(err, &e) {
 		t.Fatalf("want *ErrNotProjectRoot, got %v", err)
@@ -38,7 +38,7 @@ func TestResolveDir_MissingMigrationsDirFails(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "go.mod"), "module example.com/x\n\ngo 1.21\n")
 	// no migrations/ directory created
-	_, _, err := resolveDir(root, "")
+	_, _, err := ResolveDir(root, "")
 	var e *ErrMigrationsDirNotFound
 	if !errors.As(err, &e) {
 		t.Fatalf("want *ErrMigrationsDirNotFound, got %v", err)

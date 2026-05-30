@@ -16,12 +16,17 @@ import (
 	"github.com/matthewmcneely/modusgraph/migrate"
 )
 
-// Provider supplies a Client and the registered migration list at runtime.
-// Implement this in your application and bind it via kong.Bind so each
-// sub-command's Run method receives it.
+// Provider supplies a Client, the registered migration list, and the current
+// schema model set at runtime. Implement this in your application and bind it
+// via kong.Bind so each sub-command's Run method receives it.
+//
+// Runtime commands (up/down/status/version/history) use Client and Migrations.
+// The authoring commands (create/diff/snapshot/verify) use Models — one zero
+// value per schema entity type, typically the generated schema.Models().
 type Provider interface {
 	Client() mg.Client
 	Migrations() []migrate.Migration
+	Models() []any
 }
 
 // MigrateCmd is the parent command. Mount it in your CLI struct:
@@ -37,6 +42,11 @@ type MigrateCmd struct {
 	Status  StatusCmd  `cmd:"" help:"Show applied and pending migrations."`
 	Version VersionCmd `cmd:"" help:"Print the current migration version."`
 	History HistoryCmd `cmd:"" help:"Show the migration chain and flag a broken history."`
+
+	Create   CreateCmd   `cmd:"" help:"Scaffold a new migration from the current structs."`
+	Diff     DiffCmd     `cmd:"" help:"Show (or check) the schema drift the next migration would capture."`
+	Snapshot SnapshotCmd `cmd:"" help:"Re-sync the desired-state snapshot to the current structs."`
+	Verify   VerifyCmd   `cmd:"" help:"Check the live schema against the current structs."`
 }
 
 // UpCmd applies pending migrations.
@@ -113,4 +123,141 @@ func (c *VersionCmd) Run(p Provider) error {
 		fmt.Printf("version: %d\n", v)
 	}
 	return nil
+}
+
+// CreateCmd scaffolds a new migration: it diffs the current structs against the
+// desired-state snapshot, writes the .go + .schema pair, advances the snapshot,
+// and (by default) registers the new variable in the All slice.
+type CreateCmd struct {
+	Name        string `arg:"" help:"Human name for the migration (sanitized to snake_case)."`
+	Register    bool   `default:"true" negatable:"" help:"Append the new migration to the All slice."`
+	ProjectRoot string `help:"Project root (defaults to the current directory)." type:"path"`
+	Dir         string `help:"Migrations directory (defaults to <root>/migrations)." type:"path"`
+}
+
+func (c *CreateCmd) Run(p Provider) error {
+	dir, pkg, err := migrate.ResolveDir(c.ProjectRoot, c.Dir)
+	if err != nil {
+		return err
+	}
+	report, err := migrate.Scaffold(migrate.ScaffoldParams{
+		Migrations: p.Migrations(),
+		Models:     p.Models(),
+		Dir:        dir,
+		Package:    pkg,
+		Name:       c.Name,
+		Register:   c.Register,
+	})
+	if err != nil {
+		return err
+	}
+	printReport(report, c.Register)
+	return nil
+}
+
+// DiffCmd previews the delta the next migration would capture. With --check it
+// writes nothing and exits non-zero when a delta exists — the gofmt -l idiom,
+// for an offline CI gate.
+type DiffCmd struct {
+	Check       bool   `help:"Exit non-zero if the structs have drifted from the snapshot."`
+	ProjectRoot string `help:"Project root (defaults to the current directory)." type:"path"`
+	Dir         string `help:"Migrations directory (defaults to <root>/migrations)." type:"path"`
+}
+
+func (c *DiffCmd) Run(p Provider) error {
+	dir, _, err := migrate.ResolveDir(c.ProjectRoot, c.Dir)
+	if err != nil {
+		return err
+	}
+	delta := migrate.Diff(dir, p.Models())
+	printDelta(delta)
+	if c.Check && !delta.Empty() {
+		return fmt.Errorf("migrate diff: schema drift detected — run `migrate create <name>` to capture it")
+	}
+	return nil
+}
+
+// SnapshotCmd re-syncs the desired-state snapshot to the current structs without
+// writing a migration — use it after hand-authoring a migration create cannot
+// generate (a retype or drop).
+type SnapshotCmd struct {
+	ProjectRoot string `help:"Project root (defaults to the current directory)." type:"path"`
+	Dir         string `help:"Migrations directory (defaults to <root>/migrations)." type:"path"`
+}
+
+func (c *SnapshotCmd) Run(p Provider) error {
+	dir, _, err := migrate.ResolveDir(c.ProjectRoot, c.Dir)
+	if err != nil {
+		return err
+	}
+	path, err := migrate.Snapshot(migrate.ScaffoldParams{Models: p.Models(), Dir: dir})
+	if err != nil {
+		return err
+	}
+	fmt.Printf("snapshot: wrote %s\n", path)
+	return nil
+}
+
+// VerifyCmd checks the live schema against the current structs and exits
+// non-zero on drift — the DB-backed CI gate, run after `migrate up`.
+type VerifyCmd struct{}
+
+func (c *VerifyCmd) Run(p Provider) error {
+	drift, err := migrate.Verify(context.Background(), p.Client(), p.Models())
+	if err != nil {
+		return err
+	}
+	if drift.Clean() {
+		fmt.Println("verify: live schema satisfies the current models")
+		return nil
+	}
+	for _, m := range drift.Missing {
+		fmt.Printf("  MISSING:  %s\n", m)
+	}
+	for _, m := range drift.Mismatched {
+		fmt.Printf("  MISMATCH: %s\n", m)
+	}
+	return fmt.Errorf("migrate verify: live schema drift — %d missing, %d mismatched",
+		len(drift.Missing), len(drift.Mismatched))
+}
+
+// printReport summarizes a scaffolded migration for the operator.
+func printReport(r migrate.ScaffoldReport, wantRegister bool) {
+	fmt.Printf("created migration %d (after %d)\n", r.MigrationID, r.After)
+	fmt.Printf("  %s\n  %s\n", r.GoFile, r.SchemaFile)
+	printChanges("added", r.Added)
+	printChanges("index changed", r.IndexChanged)
+	printChanges("TYPE CHANGED (needs RetypePredicate)", r.TypeChanged)
+	printChanges("REMOVED (not auto-dropped)", r.Removed)
+	if !r.HasDelta && len(r.TypeChanged)+len(r.Removed) == 0 {
+		fmt.Println("  no schema delta — empty stub migration")
+	}
+	switch {
+	case r.Registered:
+		fmt.Println("  registered in the All slice")
+	case wantRegister:
+		fmt.Println("  NOT registered — add the new var to All in your migrations registry")
+	}
+}
+
+// printDelta prints the classified drift for `migrate diff`.
+func printDelta(d migrate.Delta) {
+	if d.Empty() {
+		fmt.Println("no drift: structs match the desired-state snapshot")
+		return
+	}
+	printChanges("added", d.Added)
+	printChanges("index changed", d.IndexChanged)
+	printChanges("TYPE CHANGED (needs RetypePredicate)", d.TypeChanged)
+	printChanges("REMOVED (not auto-dropped)", d.Removed)
+}
+
+func printChanges(label string, items []string) {
+	if len(items) == 0 {
+		return
+	}
+	fmt.Printf("  %s (%d):\n", label, len(items))
+	for _, it := range items {
+		fmt.Printf("    %s\n", it)
+	}
 }
