@@ -80,6 +80,18 @@ A step's `SchemaChange` carries exactly one of three fields:
 `Ensure` and `EnsureSchema` apply the same predicates; only the freezing
 differs. Freeze anything that ships.
 
+### Declare each predicate consistently
+
+A directive like `@index` or `@reverse` is a property of the **predicate**, not
+of an individual edge — Dgraph stores one definition per predicate. So when
+several structs declare the same predicate (for example, many types holding a
+`tenant` edge), every one of them must give it identical directives. If they
+disagree, there is no single correct schema to render, so `MarshalSchema` returns
+an error naming the predicate and the structs on each side rather than silently
+picking one. Picking one would also hide the disagreement: a later edit to the
+struct whose declaration "lost" would never change the output. Make the
+declarations agree — declare `reverse` on every edge of the predicate, or none.
+
 ## Immutability
 
 Each step's checksum covers its identity and its schema portion, never its

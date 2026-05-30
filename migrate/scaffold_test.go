@@ -40,8 +40,8 @@ func bucketHas(bucket []string, substr string) bool {
 }
 
 func TestDiffSchema_ClassifiesEachChange(t *testing.T) {
-	prev := MarshalSchema(&diffPrev{})
-	current := MarshalSchema(&diffCurrent{})
+	prev := mustMarshalSchema(t, &diffPrev{})
+	current := mustMarshalSchema(t, &diffCurrent{})
 
 	d := diffSchema(prev, current)
 
@@ -76,14 +76,14 @@ func TestDiffSchema_ClassifiesEachChange(t *testing.T) {
 }
 
 func TestDiffSchema_IdenticalIsEmpty(t *testing.T) {
-	s := MarshalSchema(&diffCurrent{})
+	s := mustMarshalSchema(t, &diffCurrent{})
 	if d := diffSchema(s, s); !d.Empty() {
 		t.Errorf("identical schemas should produce an empty delta; got %+v", d)
 	}
 }
 
 func TestDiffSchema_EmptyPrevIsAllAdded(t *testing.T) {
-	current := MarshalSchema(&diffCurrent{})
+	current := mustMarshalSchema(t, &diffCurrent{})
 	d := diffSchema("", current)
 	if len(d.Added) == 0 || d.HasFlagged() {
 		t.Errorf("empty prior state should make every predicate Added with no flags; got %+v", d)
@@ -206,7 +206,7 @@ func TestRenderMigrationFile_FlaggedOnly(t *testing.T) {
 
 func TestScaffold_AddOnlyWiresEnsureStepAndAdvancesState(t *testing.T) {
 	_, dir := tempProject(t)
-	mustWrite(t, filepath.Join(dir, schemaStateFile), MarshalSchema(&scafBase{}))
+	mustWrite(t, filepath.Join(dir, schemaStateFile), mustMarshalSchema(t, &scafBase{}))
 
 	report, err := Scaffold(ScaffoldParams{
 		Migrations: []Migration{{ID: 20260528000001, After: 0, Name: "baseline"}},
@@ -243,8 +243,8 @@ func TestScaffold_AddOnlyWiresEnsureStepAndAdvancesState(t *testing.T) {
 	}
 
 	// State advanced to the current structs → a follow-up diff is empty.
-	if d := Diff(dir, []any{&scafAdded{}}); !d.Empty() {
-		t.Errorf("state not advanced; follow-up diff still shows %+v", d)
+	if d, err := Diff(dir, []any{&scafAdded{}}); err != nil || !d.Empty() {
+		t.Errorf("state not advanced; follow-up diff err=%v shows %+v", err, d)
 	}
 	// The new var was appended to All.
 	if reg := readFile(t, filepath.Join(dir, "migrations.go")); !strings.Contains(reg, "addMime20260601090000") {
@@ -254,7 +254,7 @@ func TestScaffold_AddOnlyWiresEnsureStepAndAdvancesState(t *testing.T) {
 
 func TestScaffold_FlaggedOnlyEmitsStubAndNotes(t *testing.T) {
 	_, dir := tempProject(t)
-	mustWrite(t, filepath.Join(dir, schemaStateFile), MarshalSchema(&retypeBefore{}))
+	mustWrite(t, filepath.Join(dir, schemaStateFile), mustMarshalSchema(t, &retypeBefore{}))
 
 	report, err := Scaffold(ScaffoldParams{
 		Migrations: []Migration{{ID: 20260528000001, After: 0, Name: "baseline"}},
@@ -317,11 +317,11 @@ func TestSnapshot_RewritesStateOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
-	if got := readFile(t, path); got != MarshalSchema(&scafAdded{}) {
+	if got := readFile(t, path); got != mustMarshalSchema(t, &scafAdded{}) {
 		t.Errorf("snapshot did not write the current schema")
 	}
-	if d := Diff(dir, []any{&scafAdded{}}); !d.Empty() {
-		t.Errorf("diff after snapshot should be empty; got %+v", d)
+	if d, err := Diff(dir, []any{&scafAdded{}}); err != nil || !d.Empty() {
+		t.Errorf("diff after snapshot should be empty; err=%v got %+v", err, d)
 	}
 	// Snapshot writes no migration files.
 	entries, _ := os.ReadDir(dir)

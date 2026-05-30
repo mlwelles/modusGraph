@@ -33,7 +33,11 @@ func (d Drift) Clean() bool { return len(d.Missing)+len(d.Mismatched) == 0 }
 // differently. Use it as a post-migration drift gate: after `migrate up`, the
 // live schema must satisfy the current structs.
 func Verify(ctx context.Context, c mg.Client, models []any) (Drift, error) {
-	wantDecls, wantNames := schemaPredicates(MarshalSchema(models...))
+	want, err := MarshalSchema(models...)
+	if err != nil {
+		return Drift{}, err
+	}
+	wantDecls, wantNames := schemaPredicates(want)
 	live, err := c.GetSchema(ctx)
 	if err != nil {
 		return Drift{}, fmt.Errorf("migrate: reading live schema: %w", err)

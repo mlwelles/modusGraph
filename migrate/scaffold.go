@@ -78,17 +78,26 @@ type ScaffoldReport struct {
 // Diff computes the delta the next migration would capture: the current structs'
 // schema against the checked-in desired-state snapshot. It writes nothing and
 // needs no database, so it backs both `migrate diff` and the offline CI gate.
-func Diff(dir string, models []any) Delta {
-	current := MarshalSchema(models...)
+// It returns an error when the structs declare a predicate inconsistently (see
+// MarshalSchema).
+func Diff(dir string, models []any) (Delta, error) {
+	current, err := MarshalSchema(models...)
+	if err != nil {
+		return Delta{}, err
+	}
 	prev, _ := os.ReadFile(filepath.Join(dir, schemaStateFile)) // missing → empty
-	return diffSchema(string(prev), current)
+	return diffSchema(string(prev), current), nil
 }
 
 // Snapshot re-syncs the desired-state snapshot to the current structs without
 // writing a migration. It returns the snapshot file's path.
 func Snapshot(p ScaffoldParams) (string, error) {
+	schema, err := MarshalSchema(p.Models...)
+	if err != nil {
+		return "", err
+	}
 	statePath := filepath.Join(p.Dir, schemaStateFile)
-	if err := os.WriteFile(statePath, []byte(MarshalSchema(p.Models...)), 0o644); err != nil {
+	if err := os.WriteFile(statePath, []byte(schema), 0o644); err != nil {
 		return "", err
 	}
 	return statePath, nil
@@ -128,7 +137,10 @@ func Scaffold(p ScaffoldParams) (ScaffoldReport, error) {
 		return ScaffoldReport{}, fmt.Errorf("migrate: migration name %q produces the Go test file %d_%s.go, which Go excludes from the package build; choose a name that does not end in \"test\"", name, id, name)
 	}
 
-	current := MarshalSchema(p.Models...)
+	current, err := MarshalSchema(p.Models...)
+	if err != nil {
+		return ScaffoldReport{}, err
+	}
 	statePath := filepath.Join(p.Dir, schemaStateFile)
 	prev, _ := os.ReadFile(statePath) // missing → empty
 	delta := diffSchema(string(prev), current)
