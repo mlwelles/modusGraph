@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-06-04 - OpenTelemetry instrumentation extracted
+
+- refactor(typed)!: the typed client no longer hard-depends on OpenTelemetry. The
+  inline `startDBSpan`/`endDBSpan` calls are replaced with a no-op-by-default `Tracer`
+  seam (`typed.Span`, `typed.Tracer`, `typed.SetTracer`). The OpenTelemetry
+  implementation moved to
+  [`modusgraph-telemetry`](https://github.com/mlwelles/modusgraph-telemetry); install it
+  with `typed.SetTracer(telemetry.New())`.
+
 ## 2026-06-04 - Migration engine extracted
 
 - chore: the schema versioning and migration engine (`migrate`, `migrate/migratecli`)
