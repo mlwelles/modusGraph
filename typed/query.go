@@ -268,8 +268,8 @@ func (qb *Query[T]) GroupBy(predicate string) *RawQuery {
 
 // Nodes executes the query and returns all matching records.
 func (qb *Query[T]) Nodes() (out []T, err error) {
-	_, span := startDBSpan(qb.ctx, "query", entityName[T]())
-	defer func() { endDBSpan(span, err) }()
+	_, span := tracer.StartSpan(qb.ctx, "query", entityName[T]())
+	defer func() { span.End(err) }()
 	matched, err := qb.resolveRoots()
 	if err != nil {
 		return nil, err
@@ -286,8 +286,8 @@ func (qb *Query[T]) Nodes() (out []T, err error) {
 // First executes the query with an implicit Limit(1) and returns the first
 // record, or (nil, nil) if the query matched no rows.
 func (qb *Query[T]) First() (rec *T, err error) {
-	_, span := startDBSpan(qb.ctx, "query", entityName[T]())
-	defer func() { endDBSpan(span, err) }()
+	_, span := tracer.StartSpan(qb.ctx, "query", entityName[T]())
+	defer func() { span.End(err) }()
 	matched, err := qb.resolveRoots()
 	if err != nil {
 		return nil, err
@@ -320,9 +320,9 @@ func (qb *Query[T]) First() (rec *T, err error) {
 // stops.
 func (qb *Query[T]) IterNodes() iter.Seq2[*T, error] {
 	return func(yield func(*T, error) bool) {
-		_, span := startDBSpan(qb.ctx, "query", entityName[T]())
+		_, span := tracer.StartSpan(qb.ctx, "query", entityName[T]())
 		var ferr error
-		defer func() { endDBSpan(span, ferr) }()
+		defer func() { span.End(ferr) }()
 		matched, err := qb.resolveRoots()
 		if err != nil {
 			ferr = err
