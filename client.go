@@ -96,6 +96,11 @@ type Client interface {
 	// LoadData bulk-loads RDF or JSON data files from dataDir into the database,
 	// configured by the given options. It replaces the previous live-loader.
 	LoadData(ctx context.Context, dataDir string, opts ...load.Option) error
+
+	// AlterSchema applies a raw Dgraph Schema Definition Language string,
+	// bypassing dgman's additive-only path. Use for predicate renames, type
+	// drops, or any alter that UpdateSchema cannot express.
+	AlterSchema(ctx context.Context, schema string) error
 }
 
 const (
@@ -632,6 +637,19 @@ func (c client) UpdateSchema(ctx context.Context, obj ...any) error {
 	}
 
 	return dgClient.Alter(ctx, &api.Operation{Schema: vecSchema.String()})
+}
+
+// AlterSchema applies a raw DQL schema string directly via Dgraph Alter,
+// bypassing dgman's additive CreateSchema path.
+func (c client) AlterSchema(ctx context.Context, schema string) error {
+	client, err := c.pool.get()
+	if err != nil {
+		c.logger.Error(err, "Failed to get client from pool")
+		return err
+	}
+	defer c.pool.put(client)
+
+	return client.Alter(ctx, &api.Operation{Schema: schema})
 }
 
 // GetSchema implements retrieving the Dgraph schema.
