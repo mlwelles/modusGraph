@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-06-04 - Migration engine extracted
+
+- chore: the schema versioning and migration engine (`migrate`, `migrate/migratecli`)
+  moved to a standalone project,
+  [`modusgraph-migrate`](https://github.com/mlwelles/modusgraph-migrate).
+
 ## 2026-06-04 - Generator and wrapper-entity runtime extracted
 
 - chore: the code generator (`cmd/modusgraph-gen`) and the wrapper-entity runtime
