@@ -638,144 +638,19 @@ These operations are useful for testing or when you need to reset your database 
 
 ## Code Generation
 
-modusGraph includes `modusgraph-gen`, a code generation tool that reads your Go structs and produces
-a fully typed client library with CRUD operations, query builders, auto-paging iterators, functional
-options, and an optional CLI. For entities with private (unexported) fields, it also generates
-getters, setters, slice helpers, and serialization methods.
-
-### Installation
-
-```sh
-go install github.com/matthewmcneely/modusgraph/cmd/modusgraph-gen@latest
-```
-
-### Usage
-
-Add a `go:generate` directive to your package:
+Code generation now lives in a separate project:
+**[`modusgraph-gen`](https://github.com/mlwelles/modusgraph-gen)**. It reads your Go
+structs and produces a fully typed client, query builders, auto-paging iterators,
+functional options, accessors for private fields, and an optional CLI.
 
 ```go
-//go:generate go run github.com/matthewmcneely/modusgraph/cmd/modusgraph-gen
+//go:generate go run github.com/mlwelles/modusgraph-gen/cmd/modusgraph-gen -entities
 ```
 
-Then run:
-
-```sh
-go generate ./...
-```
-
-### What Gets Generated
-
-| Template | Output | Scope |
-|----------|--------|-------|
-| schema_marker | `marker_gen.go` | Once (schema dir) -- `SchemaTypeName`, `SchemaPredicates`, `SchemaSearchPredicate` constants |
-| schema_client | `client_gen.go` | Once (schema-client dir) -- aggregate `Client` with one `*typed.Client[T]` field per entity |
-| wrapper_client | `client_gen.go` | Once (entity-client dir) -- wrapper-side aggregate `Client` with per-entity wrapper sub-clients |
-| entity | `<entity>_gen.go` | Per entity -- wrapper type embedding `typed.Wrapper[S]` with `New<E>` constructor and `Wrap<E>` adapter |
-| options | `<entity>_options_gen.go` | Per entity -- functional options (`typed.Option[T]`) for each scalar field |
-| accessors | `<entity>_accessors_gen.go` | Per entity (private fields only) -- getters, setters, slice helpers |
-| wrapper_entity_client | `<entity>_client_gen.go` | Per entity -- wrapper client composing over `*typed.Client[S]` |
-| wrapper_query | `<entity>_query_gen.go` | Per entity -- fluent wrapper query builder over `*typed.Query[S]` |
-| cli | `cmd/<pkg>/main.go` | Once -- Kong CLI with subcommands per entity and raw DQL query |
-
-### Flags
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `-pkg` | `.` | Path to the target Go package directory |
-| `-output` | same as `-pkg` | Output directory for generated files |
-| `-cli-dir` | `{output}/cmd/{package}` | Output directory for CLI main.go |
-| `-cli-name` | package name | Name for CLI binary |
-| `-with-validator` | `false` | Enable struct validation in generated CLI |
-
-### Entity Detection
-
-A struct is recognized as an entity when it has both of these fields:
-
-```go
-UID   string   `json:"uid,omitempty"`
-DType []string `json:"dgraph.type,omitempty"`
-```
-
-All fields (exported and private) with a `json` tag are parsed as entity fields. Fields without a
-`json` tag or with `dgraph:"-"` are skipped. `UID` and `DType` must always be exported.
-
-Edge relationships are detected when a field type is `[]OtherEntity` (multi-edge) or `*OtherEntity`
-(singular edge) where `OtherEntity` is another struct in the same package. Singular edges can also
-be declared with `validate:"max=1"` or `validate:"len=1"` on a `[]OtherEntity` field.
-
-### Private Field Support
-
-Entities can use unexported (lowercase) fields for encapsulation. The generator produces accessor
-methods so that consumers interact through a clean API rather than accessing fields directly:
-
-```go
-type Studio struct {
-    UID   string   `json:"uid,omitempty"`
-    DType []string `json:"dgraph.type,omitempty"`
-
-    name    string     `json:"name,omitempty" dgraph:"index=exact"`
-    founder *Director  `json:"founder,omitempty"`
-    films   []Film     `json:"films,omitempty"`
-    tags    []string   `json:"tags,omitempty"`
-    Founded string     `json:"founded,omitempty"`  // exported — direct access
-}
-```
-
-#### Generated Accessors
-
-| Field type | Generated methods |
-|------------|-------------------|
-| Private scalar (`name string`) | `Name() string`, `SetName(v string)` |
-| Private singular edge (`founder *Director`) | `Founder() *Director`, `SetFounder(v *Director)` |
-| Private multi-edge (`films []Film`) | `Films()`, `SetFilms()`, `AppendFilms()`, `RemoveFilms(uid)`, `RemoveFilmsFunc(fn)` |
-| Private primitive slice (`tags []string`) | `Tags()`, `SetTags()`, `AppendTags()`, `RemoveTags(v)`, `RemoveTagsFunc(fn)` |
-| Exported field (`Founded string`) | No accessors — direct access |
-
-Getter names follow Go convention: `Name()` not `GetName()`. Setters use the `Set` prefix.
-`RemoveFunc` methods accept a predicate function, following the Go 1.21+ `slices.DeleteFunc`
-convention.
-
-#### Serialization
-
-Private fields cannot be serialized by Go's `encoding/json` or dgman's reflect-based mutation path.
-The generator solves this by producing two methods:
-
-- **`DgraphMap() map[string]interface{}`** — converts the struct to a map for the write path. The
-  modusgraph engine detects entities implementing the `DgraphMapper` interface and routes them
-  through a map-based mutation path automatically.
-- **`UnmarshalJSON([]byte) error`** — custom JSON unmarshaling for the read path, called
-  automatically by `encoding/json` when Dgraph query results are decoded.
-
-Entities with only exported fields do not get these methods and use the standard dgman code path.
-
-#### Field Opt-Out
-
-Skip a field from code generation using either method:
-
-```go
-// No json tag — field is internal, not persisted
-tempCache string
-
-// Explicit opt-out — field has json tag but is excluded from generation
-Internal string `json:"internal,omitempty" dgraph:"-"`
-```
-
-#### Functional Options and CLI
-
-Functional options and the generated CLI automatically use setters for private fields:
-
-```go
-// Generated functional option uses setter:
-func WithStudioName(v string) StudioOption {
-    return func(e *Studio) {
-        e.SetName(v)
-    }
-}
-
-// Generated CLI AddCmd uses setter:
-v := &movies.Studio{Founded: c.Founded}
-v.SetName(c.Name)
-```
+Generated code imports the generic typed primitives from this module
+(`modusgraph/typed`) and the wrapper base from `modusgraph-gen/entity`. See the
+[modusgraph-gen README](https://github.com/mlwelles/modusgraph-gen) for struct-tag
+conventions, CLI flags, and the required `replace` directive.
 
 ## Observability
 
@@ -826,10 +701,6 @@ modusGraph provides several command-line tools and example applications to help 
 and explore the package. These are organized in the `cmd` and `examples` folders:
 
 ### Commands (`cmd` folder)
-
-- **`cmd/modusgraph-gen`**: Code generation tool that produces typed clients, query builders,
-  iterators, accessors, and a CLI from your Go struct definitions.
-  - See the [Code Generation](#code-generation) section above for details.
 
 - **`cmd/query`** *(deprecated)*: Standalone DQL query tool. Use the generated CLI's `query`
   subcommand instead — it provides the same functionality with `--url`/`--dir` support.

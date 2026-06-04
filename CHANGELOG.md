@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-06-04 - Generator and wrapper-entity runtime extracted
+
+- chore: the code generator (`cmd/modusgraph-gen`) and the wrapper-entity runtime
+  (`typed/wrapper.go`) moved to a standalone project,
+  [`modusgraph-gen`](https://github.com/mlwelles/modusgraph-gen). The `typed` package
+  retains only the generic struct client and query builder.
+
 ## 2025-10-20 - Version 0.3.1
 
 - chore: update to Dgraph v25.0.0 and dgo v250.0.0
