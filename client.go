@@ -23,6 +23,8 @@ import (
 	"github.com/go-playground/validator/v10"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+
+	"github.com/matthewmcneely/modusgraph/load"
 )
 
 // Client provides an interface for ModusGraph operations
@@ -90,6 +92,10 @@ type Client interface {
 
 	// WithRetry executes fn, retrying on aborted transactions per policy.
 	WithRetry(ctx context.Context, policy RetryPolicy, fn func() error) error
+
+	// LoadData bulk-loads RDF or JSON data files from dataDir into the database,
+	// configured by the given options. It replaces the previous live-loader.
+	LoadData(ctx context.Context, dataDir string, opts ...load.Option) error
 }
 
 const (
