@@ -131,9 +131,15 @@ type StructValidator interface {
 // SelfValidator lets a type drive its own validation. When a value passed to
 // Insert, Upsert, or Update implements SelfValidator, the client calls
 // ValidateWith instead of handing the value straight to the configured
-// StructValidator. This is the seam generated entities use to validate private
-// fields: the generated ValidateWith builds a mirror struct with exported
-// fields the underlying go-playground validator can read by reflection.
+// StructValidator.
+//
+// This is the seam for validation that struct tags cannot express on their own:
+// cross-field rules (one field constrained by another), conditional rules,
+// checks on computed or setter-derived values, and broader business rules.
+// ValidateWith receives the configured StructValidator, so an implementation can
+// still run ordinary tag-based validation and then layer custom logic on top.
+// Generated entities also use this seam to validate private fields, building a
+// mirror struct with exported fields the underlying validator can reach.
 type SelfValidator interface {
 	ValidateWith(ctx context.Context, v StructValidator) error
 }
@@ -572,9 +578,10 @@ func (c client) validateStruct(ctx context.Context, obj any) error {
 
 // validateOne validates a single struct value. If the value (or its address)
 // implements SelfValidator, validation is delegated to ValidateWith so the type
-// can validate fields the configured StructValidator cannot reach directly —
-// for example unexported fields exposed through a generated mirror struct.
-// Otherwise the value is validated by the configured StructValidator as usual.
+// can apply custom rules — cross-field, conditional, computed-value, or other
+// logic beyond struct tags (including private fields reached through a generated
+// mirror struct). Otherwise the value is validated by the configured
+// StructValidator as usual.
 func (c client) validateOne(ctx context.Context, val reflect.Value) error {
 	iface := val.Interface()
 	if val.CanAddr() {

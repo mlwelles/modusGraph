@@ -8,6 +8,7 @@ package modusgraph
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 )
 
@@ -61,5 +62,35 @@ func TestValidateSelfValidatorInSlice(t *testing.T) {
 	err := c.validateStruct(context.Background(), []*selfValidatingEntity{{Name: "a"}})
 	if !errors.Is(err, errSelfValidated) {
 		t.Fatalf("expected the SelfValidator path for slice elements, got %v", err)
+	}
+	// As in the scalar case, the SelfValidator path must not also invoke the
+	// configured StructValidator for slice elements.
+	if rv.calls != 0 {
+		t.Fatalf("StructCtx must not run for a SelfValidator slice element, got %d calls", rv.calls)
+	}
+}
+
+// dateRange validates a relationship between two fields — a cross-field rule
+// that struct tags alone cannot express.
+type dateRange struct {
+	Start int
+	End   int
+}
+
+func (d *dateRange) ValidateWith(_ context.Context, _ StructValidator) error {
+	if d.End < d.Start {
+		return fmt.Errorf("End (%d) must be >= Start (%d)", d.End, d.Start)
+	}
+	return nil
+}
+
+func TestSelfValidatorCustomCrossFieldRule(t *testing.T) {
+	c := client{options: clientOptions{validator: &recordingValidator{}}}
+
+	if err := c.validateStruct(context.Background(), &dateRange{Start: 1, End: 5}); err != nil {
+		t.Fatalf("a valid range should pass the cross-field rule: %v", err)
+	}
+	if err := c.validateStruct(context.Background(), &dateRange{Start: 5, End: 1}); err == nil {
+		t.Fatal("End < Start must fail the custom cross-field rule")
 	}
 }
