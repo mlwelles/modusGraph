@@ -131,9 +131,15 @@ type StructValidator interface {
 // SelfValidator lets a type drive its own validation. When a value passed to
 // Insert, Upsert, or Update implements SelfValidator, the client calls
 // ValidateWith instead of handing the value straight to the configured
-// StructValidator. This is the seam generated entities use to validate private
-// fields: the generated ValidateWith builds a mirror struct with exported
-// fields the underlying go-playground validator can read by reflection.
+// StructValidator.
+//
+// This is the seam for validation that struct tags cannot express on their own:
+// cross-field rules (one field constrained by another), conditional rules,
+// checks on computed or setter-derived values, and broader business rules.
+// ValidateWith receives the configured StructValidator, so an implementation can
+// still run ordinary tag-based validation and then layer custom logic on top.
+// Generated entities also use this seam to validate private fields, building a
+// mirror struct with exported fields the underlying validator can reach.
 type SelfValidator interface {
 	ValidateWith(ctx context.Context, v StructValidator) error
 }
@@ -492,9 +498,34 @@ func (c client) key() string {
 	if c.options.embeddingProvider != nil {
 		embeddingKey = fmt.Sprintf("%p", c.options.embeddingProvider)
 	}
-	return fmt.Sprintf("%s:%t:%d:%d:%d:%d:%s:%s:%s:%d", c.uri, c.options.autoSchema, c.options.poolSize,
+	// Custom gRPC dial options only apply to remote (dgraph://) connections;
+	// they are ignored for embedded (file://) URIs, so they only contribute to
+	// the dedup key for remote clients — matching that documented behavior.
+	dialKey := "0"
+	if strings.HasPrefix(c.uri, dgraphURIPrefix) {
+		dialKey = dialOptionsKey(c.options.grpcDialOptions)
+	}
+	return fmt.Sprintf("%s:%t:%d:%d:%d:%d:%s:%s:%s:%s", c.uri, c.options.autoSchema, c.options.poolSize,
 		c.options.maxEdgeTraversal, c.options.cacheSizeMB, c.options.maxRecvMsgSize,
-		c.options.namespace, validatorKey, embeddingKey, len(c.options.grpcDialOptions))
+		c.options.namespace, validatorKey, embeddingKey, dialKey)
+}
+
+// dialOptionsKey identifies a set of custom gRPC dial options for the client
+// dedup cache. grpc.DialOption values are opaque and not comparable, so the key
+// uses each option's runtime identity rather than just the count: two clients
+// configured with different options get different keys and are never merged.
+// Two clients built from separately-constructed but equivalent options also
+// differ, which is safe — the cache errs toward keeping them apart rather than
+// merging connections that were configured differently.
+func dialOptionsKey(opts []grpc.DialOption) string {
+	if len(opts) == 0 {
+		return "0"
+	}
+	parts := make([]string, len(opts))
+	for i, opt := range opts {
+		parts[i] = fmt.Sprintf("%p", opt)
+	}
+	return strings.Join(parts, ",")
 }
 
 // embeddingProvider implements the embeddingClient interface, exposing the
@@ -547,9 +578,10 @@ func (c client) validateStruct(ctx context.Context, obj any) error {
 
 // validateOne validates a single struct value. If the value (or its address)
 // implements SelfValidator, validation is delegated to ValidateWith so the type
-// can validate fields the configured StructValidator cannot reach directly —
-// for example unexported fields exposed through a generated mirror struct.
-// Otherwise the value is validated by the configured StructValidator as usual.
+// can apply custom rules — cross-field, conditional, computed-value, or other
+// logic beyond struct tags (including private fields reached through a generated
+// mirror struct). Otherwise the value is validated by the configured
+// StructValidator as usual.
 func (c client) validateOne(ctx context.Context, val reflect.Value) error {
 	iface := val.Interface()
 	if val.CanAddr() {
@@ -648,6 +680,12 @@ func firstUpsertPredicate(obj any) string {
 	for v.Kind() == reflect.Ptr {
 		v = v.Elem()
 	}
+	// A nil pointer (or nil interface) dereferences to an invalid Value, and a
+	// non-struct has no fields; either way there is no upsert predicate, and
+	// calling Type()/NumField() on them would panic.
+	if !v.IsValid() || v.Kind() != reflect.Struct {
+		return ""
+	}
 	t := v.Type()
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
@@ -717,9 +755,12 @@ func (c client) LoadAndDelete(ctx context.Context, obj any, key any, predicates 
 	// The shared read-write transaction already elects one winner against a real
 	// Dgraph cluster (the loser aborts on commit), but the embedded engine does
 	// no commit-time conflict check, so without this lock concurrent callers
-	// would each read the node and each report loaded=true. The lock makes
-	// read-and-consume atomic regardless of backend.
-	if c.consumeMu != nil {
+	// would each read the node and each report loaded=true. A real Dgraph
+	// cluster aborts the loser of a commit conflict and the bounded retry below
+	// already elects a single winner, so the lock is needed — and taken — only
+	// for the embedded engine. Taking it for remote clusters would needlessly
+	// serialize consumers operating on unrelated keys.
+	if c.engine != nil && c.consumeMu != nil {
 		c.consumeMu.Lock()
 		defer c.consumeMu.Unlock()
 	}
