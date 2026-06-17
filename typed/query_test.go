@@ -202,12 +202,28 @@ func TestQuery_CombinedFilterShiftsPlaceholders(t *testing.T) {
 	q.Filter("eq(name, $1)", "a")
 	q.Filter("eq(qty, $1)", 7)
 	expr, params := q.CombinedFilter()
-	const want = "eq(name, $1) AND eq(qty, $2)"
+	const want = "(eq(name, $1)) AND (eq(qty, $2))"
 	if expr != want {
 		t.Fatalf("CombinedFilter expr = %q, want %q", expr, want)
 	}
 	if len(params) != 2 || params[0] != "a" || params[1] != 7 {
 		t.Fatalf("CombinedFilter params = %v, want [a 7]", params)
+	}
+}
+
+// TestQuery_CombinedFilterParenthesizesFragments pins the precedence guarantee:
+// a fragment that contains OR must stay grouped when it is ANDed with another
+// fragment. Without per-fragment parentheses the expression would render as
+// "a OR b AND c", which dgraph parses as "a OR (b AND c)" — silently widening
+// the result set.
+func TestQuery_CombinedFilterParenthesizesFragments(t *testing.T) {
+	q := typed.NewDetachedQuery[widget]()
+	q.Filter(`eq(name, "alpha") OR eq(name, "beta")`)
+	q.Filter(`ge(qty, "5")`)
+	expr, _ := q.CombinedFilter()
+	const want = `(eq(name, "alpha") OR eq(name, "beta")) AND (ge(qty, "5"))`
+	if expr != want {
+		t.Fatalf("CombinedFilter precedence: expr = %q, want %q", expr, want)
 	}
 }
 
@@ -736,7 +752,7 @@ func TestIterNodes_RespectsOffset(t *testing.T) {
 			t.Fatalf("Add %d: %v", i, err)
 		}
 	}
-	var got []int
+	got := make([]int, 0, n-3) // offset 3 of n records
 	for w, err := range c.Query(ctx).OrderAsc("qty").Offset(3).IterNodes() {
 		if err != nil {
 			t.Fatalf("IterNodes yielded error: %v", err)
@@ -764,7 +780,7 @@ func TestIterNodes_RespectsOffsetAndLimit(t *testing.T) {
 			t.Fatalf("Add %d: %v", i, err)
 		}
 	}
-	var got []int
+	got := make([]int, 0, 120) // Limit(120)
 	for w, err := range c.Query(ctx).OrderAsc("qty").Offset(60).Limit(120).IterNodes() {
 		if err != nil {
 			t.Fatalf("IterNodes yielded error: %v", err)
@@ -791,10 +807,13 @@ func TestIterNodes_OneQueryPerPage(t *testing.T) {
 			t.Fatalf("Add %d: %v", i, err)
 		}
 	}
-	// Obtaining the iterator runs no query — IterNodes is lazy.
+	// Obtaining the iterator runs no query — IterNodes is lazy. Measure the
+	// delta around the build, not the absolute count, so the assertion holds
+	// regardless of how many queries the seeding above happened to run.
+	before := queriesExecuted
 	seq := c.Query(ctx).IterNodes()
-	if queriesExecuted != 0 {
-		t.Fatalf("building the IterNodes iterator executed %d queries, want 0", queriesExecuted)
+	if delta := queriesExecuted - before; delta != 0 {
+		t.Fatalf("building the IterNodes iterator executed %d queries, want 0", delta)
 	}
 	seen := 0
 	for _, err := range seq {
@@ -806,8 +825,8 @@ func TestIterNodes_OneQueryPerPage(t *testing.T) {
 	if seen != n {
 		t.Fatalf("IterNodes streamed %d records, want %d", seen, n)
 	}
-	if queriesExecuted != 3 {
-		t.Fatalf("IterNodes over %d records ran %d queries, want 3", n, queriesExecuted)
+	if delta := queriesExecuted - before; delta != 3 { // ceil(125/50) = 3 pages
+		t.Fatalf("IterNodes over %d records ran %d queries, want 3", n, delta)
 	}
 }
 
@@ -1059,7 +1078,9 @@ func TestRawQuery_CarriesEarlierBuilders(t *testing.T) {
 // map entry is one owner owning one pet of the given name; the pet is inserted
 // first so the owner's edge links an already-persisted node. It returns an
 // owner client bound to conn.
-func seedOwners(ctx context.Context, t *testing.T, conn modusgraph.Client, ownerToPet map[string]string) *typed.Client[owner] {
+func seedOwners(
+	ctx context.Context, t *testing.T, conn modusgraph.Client, ownerToPet map[string]string,
+) *typed.Client[owner] {
 	t.Helper()
 	pets := typed.NewClient[pet](conn)
 	owners := typed.NewClient[owner](conn)
@@ -1146,6 +1167,41 @@ func TestQuery_WhereEdgeCombinesWithFilter(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].Name != "Alice" {
 		t.Fatalf("Filter(name=Alice)+WhereEdge(pets,name=Fido) returned %+v, want [Alice]", got)
+	}
+}
+
+func TestQuery_WhereEdgePreservesUIDRoot(t *testing.T) {
+	ctx := context.Background()
+	conn := newConn(t)
+	pets := typed.NewClient[pet](conn)
+	owners := typed.NewClient[owner](conn)
+
+	fido := &pet{Name: "Fido"}
+	if err := pets.Add(ctx, fido); err != nil {
+		t.Fatalf("Add pet: %v", err)
+	}
+	alice := &owner{Name: "Alice", Pets: []*pet{fido}}
+	carol := &owner{Name: "Carol", Pets: []*pet{fido}}
+	for _, o := range []*owner{alice, carol} {
+		if err := owners.Add(ctx, o); err != nil {
+			t.Fatalf("Add owner %q: %v", o.Name, err)
+		}
+	}
+
+	// Both Alice and Carol own Fido, so the WhereEdge pre-pass matches both.
+	// Rooting the query at Alice's UID must survive that pre-pass: the result
+	// is the intersection (just Alice), not every Fido owner. Before the fix,
+	// resolveRoots overwrote the UID root with uid(Alice, Carol) and returned
+	// both owners.
+	got, err := owners.Query(ctx).
+		UID(alice.UID).
+		WhereEdge("pets", `eq(name, "Fido")`).
+		Nodes()
+	if err != nil {
+		t.Fatalf("UID+WhereEdge Nodes: %v", err)
+	}
+	if len(got) != 1 || got[0].Name != "Alice" {
+		t.Fatalf("UID(Alice)+WhereEdge(pets,name=Fido) returned %+v, want [Alice]", got)
 	}
 }
 
