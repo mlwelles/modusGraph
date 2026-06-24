@@ -1188,11 +1188,10 @@ func TestQuery_WhereEdgePreservesUIDRoot(t *testing.T) {
 		}
 	}
 
-	// Both Alice and Carol own Fido, so the WhereEdge pre-pass matches both.
-	// Rooting the query at Alice's UID must survive that pre-pass: the result
-	// is the intersection (just Alice), not every Fido owner. Before the fix,
-	// resolveRoots overwrote the UID root with uid(Alice, Carol) and returned
-	// both owners.
+	// Both Alice and Carol own Fido, so the WhereEdge var block matches both.
+	// Rooting the query at Alice's UID must survive that match: the var block
+	// roots at the caller's UID, so mgMatched is the intersection (just Alice),
+	// not every Fido owner.
 	got, err := owners.Query(ctx).
 		UID(alice.UID).
 		WhereEdge("pets", `eq(name, "Fido")`).
@@ -1261,6 +1260,33 @@ func TestQuery_WhereEdgeFirst(t *testing.T) {
 	}
 }
 
+func TestQuery_WhereEdgeNodesAndCount(t *testing.T) {
+	ctx := context.Background()
+	owners := seedOwners(ctx, t, newConn(t), map[string]string{
+		"Alice": "Fido",
+		"Bob":   "Rex",
+		"Carol": "Fido",
+		"Dave":  "Fido",
+	})
+
+	// Three owners have a Fido. Limit caps the returned rows to 2, but the count
+	// reflects the full matched set: the count block runs count(uid) over
+	// uid(mgMatched), independent of the data block's pagination.
+	rows, count, err := owners.Query(ctx).
+		WhereEdge("pets", `eq(name, "Fido")`).
+		Limit(2).
+		NodesAndCount()
+	if err != nil {
+		t.Fatalf("WhereEdge NodesAndCount: %v", err)
+	}
+	if count != 3 {
+		t.Fatalf("WhereEdge NodesAndCount count = %d, want 3 (Alice, Carol, Dave)", count)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("WhereEdge NodesAndCount returned %d rows, want 2 (Limit)", len(rows))
+	}
+}
+
 func TestQuery_WhereEdgeIterNodes(t *testing.T) {
 	ctx := context.Background()
 	owners := seedOwners(ctx, t, newConn(t), map[string]string{
@@ -1281,6 +1307,30 @@ func TestQuery_WhereEdgeIterNodes(t *testing.T) {
 	}
 	if seen != 2 {
 		t.Fatalf("WhereEdge IterNodes streamed %d owners, want 2", seen)
+	}
+}
+
+func TestQuery_WhereEdgeForwardsVars(t *testing.T) {
+	ctx := context.Background()
+	owners := seedOwners(ctx, t, newConn(t), map[string]string{
+		"Alice": "Fido",
+		"Bob":   "Fido",
+	})
+
+	// Vars binds a GraphQL variable into the root function, combined with a
+	// WhereEdge constraint. The WhereEdge path renders its own multi-block
+	// request via QueryRaw, so it must forward the variable; otherwise $n is
+	// unbound and the query errors. Both own a Fido; $n narrows to Alice.
+	got, err := owners.Query(ctx).
+		Vars("byName($n: string)", map[string]string{"$n": "Alice"}).
+		RootFunc("eq(name, $n)").
+		WhereEdge("pets", `eq(name, "Fido")`).
+		Nodes()
+	if err != nil {
+		t.Fatalf("Vars+WhereEdge Nodes: %v", err)
+	}
+	if len(got) != 1 || got[0].Name != "Alice" {
+		t.Fatalf("Vars($n=Alice)+WhereEdge(pets,Fido) returned %+v, want [Alice]", got)
 	}
 }
 
